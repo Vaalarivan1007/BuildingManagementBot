@@ -6,7 +6,7 @@ import re
 class MCPProcessClient:
     def __init__(self, script_name):
         self.process = subprocess.Popen(
-            [sys.executable, script_name],
+            [sys.executable, "-u", script_name],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -42,7 +42,15 @@ class AgentOrchestrator:
         self.sec_client = MCPProcessClient("security_mcp_server.py")
         self.tel_client = MCPProcessClient("telemetry_mcp_server.py")
 
-    def execute_combined_task(self, prompt, db_password="", db_name="telemetry_db"):
+    def execute_combined_task(
+        self,
+        prompt,
+        host="121.242.232.215",
+        port=3306,
+        user="intern01",
+        db_password="Intern01@Rouser#2026",
+        db_name="sunandjay"
+    ):
         results = {}
         q_lower = prompt.lower()
 
@@ -70,9 +78,9 @@ class AgentOrchestrator:
                 "name": "query_telemetry",
                 "arguments": {
                     "natural_prompt": prompt,
-                    "host": "localhost",
-                    "port": 3306,
-                    "user": "root",
+                    "host": host,
+                    "port": port,
+                    "user": user,
                     "password": db_password,
                     "database": db_name
                 }
@@ -87,18 +95,18 @@ class AgentOrchestrator:
         self.tel_client.close()
 
 if __name__ == "__main__":
+    print("Initializing MCP Agents...")
     orchestrator = AgentOrchestrator()
     sample_prompt = "Check if port 3306 is risky and get the latest telemetry voltage readings."
     
-    # PUT YOUR LOCAL MYSQL ROOT PASSWORD AND DATABASE NAME HERE:
-    MYSQL_PASSWORD = "YOUR_ACTUAL_MYSQL_PASSWORD"  # e.g., "root" or "admin123"
-    DATABASE_NAME = "YOUR_ACTUAL_DB_NAME"          # e.g., "building_db" or "vinereadings"
-
     print("--- Sending Combined Prompt to MCP Orchestrator ---")
     output = orchestrator.execute_combined_task(
         prompt=sample_prompt,
-        db_password=MYSQL_PASSWORD,
-        db_name=DATABASE_NAME
+        host="121.242.232.215",
+        port=3306,
+        user="intern01",
+        db_password="Intern01@Rouser#2026",
+        db_name="sunandjay"
     )
     print(output)
     orchestrator.close()

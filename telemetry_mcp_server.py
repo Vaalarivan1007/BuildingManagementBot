@@ -10,6 +10,8 @@ engine = None
 def get_engine():
     global engine
     if engine is None:
+        sys.stderr.write("• Loading LLM Engine weights...\n")
+        sys.stderr.flush()
         engine = LLMEngine()
         engine.load()
     return engine
@@ -36,11 +38,11 @@ def handle_request(request):
         if tool_name == "query_telemetry":
             try:
                 natural_prompt = args.get("natural_prompt", "")
-                host = args.get("host", "localhost")
+                host = args.get("host", "121.242.232.215")
                 port = int(args.get("port", 3306))
-                user = args.get("user", "root")
-                password = args.get("password", "")
-                database = args.get("database", "telemetry_db")
+                user = args.get("user", "intern01")
+                password = args.get("password", "Intern01@Rouser#2026")
+                database = args.get("database", "sunandjay")
 
                 reader = SchemaReader(host, port, user, password, database)
                 reader.connect()
