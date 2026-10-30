@@ -29,6 +29,13 @@ from schema_reader import SchemaReader
 from sql_validator import validate_sql, format_sql, ValidationError
 from llm_engine import LLMEngine
 
+# Import AgentOrchestrator conditionally/safely if present
+try:
+    from orchestrator import AgentOrchestrator
+    MCP_ORCHESTRATOR_AVAILABLE = True
+except ImportError:
+    MCP_ORCHESTRATOR_AVAILABLE = False
+
 DB_MEMORY_FILE = "db_history.json"
 BOOKMARKS_FILE = "categorized_bookmarks.json"
 TRAIN_DB_FILE = "train_db.sqlite"
@@ -382,6 +389,9 @@ def connect_to_db(host, port, user, password, database):
     st.session_state["tables"] = reader.get_tables()
     st.session_state["db_name"] = database
     st.session_state["schema_dict"] = reader.get_schema_dict()
+    st.session_state["db_creds"] = {
+        "host": host, "port": port, "user": user, "password": password, "database": database
+    }
     record_db_usage(host, port, user, password, database)
 
 init_train_db()
@@ -685,7 +695,7 @@ with chat_container:
                                 st.rerun()
 
 # -----------------------------------------------------------------------------
-# 10. EXECUTION PIPELINE WITH TRAIN_DB ENGINE
+# 10. EXECUTION PIPELINE WITH TRAIN_DB ENGINE & MCP ROUTING
 # -----------------------------------------------------------------------------
 def _extract_sql(raw: str) -> str:
     """Strip markdown fences / 'sql' labels so validate_sql gets a clean statement."""
@@ -701,17 +711,12 @@ def _extract_sql(raw: str) -> str:
     return text.strip()
 
 def run_pipeline(question: str):
-    if "reader" not in st.session_state:
-        st.error("Please connect to a database first.")
-        return
-
-    greetings = {"hi", "hello", "hey", "hola", "good morning", "good evening"}
     clean_q = question.strip().lower()
 
-    st.session_state["messages"].append({"role": "user", "content": question})
-
     # 1. Handle Greetings
+    greetings = {"hi", "hello", "hey", "hola", "good morning", "good evening"}
     if clean_q in greetings:
+        st.session_state["messages"].append({"role": "user", "content": question})
         reply = f"Hello! Ready to analyze your building telemetry. Connected to **{st.session_state.get('db_name', 'database')}**."
         st.session_state["messages"].append({"role": "assistant", "content": reply})
         st.rerun()
@@ -733,14 +738,52 @@ def run_pipeline(question: str):
 
         # If it's strictly a rule statement (no query requested), reply directly and stop!
         if is_memory_only_statement:
+            st.session_state["messages"].append({"role": "user", "content": question})
             reply = f"Got it! I have stored this rule in **train_db**:\n> *\"{question}\"*\n\nI will apply this mapping to your upcoming queries."
             st.session_state["messages"].append({"role": "assistant", "content": reply})
             st.rerun()
             return
 
-    # 3. Regular Query Processing Pipeline
+    # 3. Security / Firewall Interception via MCP (if orchestrator & security keywords are present)
+    security_keywords = ["port", "firewall", "block", "security", "vulnerable", "risky"]
+    is_security_query = any(k in clean_q for k in security_keywords)
+    
+    if is_security_query and MCP_ORCHESTRATOR_AVAILABLE:
+        st.session_state["messages"].append({"role": "user", "content": question})
+        with st.status("🛡️ Intercepting request via Security MCP Agent...", expanded=True) as status:
+            creds = st.session_state.get("db_creds", {
+                "host": "localhost", "port": 3306, "user": "root", "password": "", "database": "telemetry_db"
+            })
+            orchestrator = AgentOrchestrator()
+            raw_out = orchestrator.execute_combined_task(
+                prompt=question,
+                host=creds.get("host", "localhost"),
+                port=creds.get("port", 3306),
+                user=creds.get("user", "root"),
+                db_password=creds.get("password", ""),
+                db_name=creds.get("database", "telemetry_db")
+            )
+            orchestrator.close()
+            status.update(label="✅ Security Analysis Complete", state="complete", expanded=False)
+            
+        try:
+            res_dict = json.loads(raw_out)
+            sec_ans = res_dict.get("security_agent", raw_out)
+        except Exception:
+            sec_ans = raw_out
+
+        st.session_state["messages"].append({"role": "assistant", "content": f"### 🛡️ Security Agent Response\n{sec_ans}"})
+        st.rerun()
+        return
+
+    # 4. Core Direct Database Pipeline
+    if "reader" not in st.session_state:
+        st.error("Please connect to a database first.")
+        return
+
+    st.session_state["messages"].append({"role": "user", "content": question})
+
     with st.status("🧠 Processing request...", expanded=True) as status:
-        
         status.update(label="🔍 Reading persistent memory & database schema...", state="running")
         st.write("• Checking train_db memories and building schema...")
         llm = get_llm()
@@ -800,7 +843,6 @@ def run_pipeline(question: str):
                     last_error = f"Execution error: {e}"
 
                 if attempt == 0:
-                    # One automatic retry: give the model the error so it can correct itself
                     st.write(f"• First attempt failed ({last_error}). Retrying with a corrected query...")
                     retry_prompt = (
                         f"{full_prompt}\n\n[PREVIOUS ATTEMPT FAILED]\n"
