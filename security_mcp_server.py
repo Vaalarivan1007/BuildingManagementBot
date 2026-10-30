@@ -26,7 +26,8 @@ def handle_request(request):
         if tool_name == "inspect_network":
             res = opn.handle(args.get("query", ""))
         elif tool_name == "check_port_risk":
-            res = opn.check_port_text(int(args.get("port", 0)))
+            port_val = args.get("port", 0)
+            res = opn.check_port_text(int(port_val))
         elif tool_name == "propose_firewall_rule":
             res = opn.propose_block(args.get("query", ""))
         else:
@@ -38,9 +39,15 @@ def handle_request(request):
             "result": {"content": [{"type": "text", "text": str(res)}]}
         }
 
+    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": "Method not found"}}
+
 if __name__ == "__main__":
-    for line in sys.stdin:
-        if not line.strip():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        line = line.strip()
+        if not line:
             continue
         try:
             req = json.loads(line)
@@ -48,4 +55,6 @@ if __name__ == "__main__":
             sys.stdout.write(json.dumps(resp) + "\n")
             sys.stdout.flush()
         except Exception as e:
-            sys.stderr.write(f"Error: {e}\n")
+            err_resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32603, "message": str(e)}}
+            sys.stdout.write(json.dumps(err_resp) + "\n")
+            sys.stdout.flush()

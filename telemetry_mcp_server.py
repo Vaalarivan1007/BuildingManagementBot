@@ -5,6 +5,15 @@ from schema_reader import SchemaReader
 from sql_validator import validate_sql, format_sql
 from llm_engine import LLMEngine
 
+engine = None
+
+def get_engine():
+    global engine
+    if engine is None:
+        engine = LLMEngine()
+        engine.load()
+    return engine
+
 def handle_request(request):
     method = request.get("method")
     params = request.get("params", {})
@@ -38,10 +47,9 @@ def handle_request(request):
                 schema_text = reader.build_schema_text()
                 tables = reader.get_tables()
 
-                engine = LLMEngine()
-                engine.load()
+                llm = get_engine()
 
-                raw_sql = engine.generate_sql(natural_prompt, schema_text, history=[])
+                raw_sql = llm.generate_sql(natural_prompt, schema_text, history=[])
                 clean_sql = validate_sql(raw_sql, tables)
                 pretty_sql = format_sql(clean_sql)
 
@@ -68,9 +76,15 @@ def handle_request(request):
             "result": {"content": [{"type": "text", "text": str(res)}]}
         }
 
+    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": "Method not found"}}
+
 if __name__ == "__main__":
-    for line in sys.stdin:
-        if not line.strip():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        line = line.strip()
+        if not line:
             continue
         try:
             req = json.loads(line)
@@ -78,4 +92,6 @@ if __name__ == "__main__":
             sys.stdout.write(json.dumps(resp) + "\n")
             sys.stdout.flush()
         except Exception as e:
-            sys.stderr.write(f"Error: {e}\n")
+            err_resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32603, "message": str(e)}}
+            sys.stdout.write(json.dumps(err_resp) + "\n")
+            sys.stdout.flush()

@@ -10,7 +10,8 @@ class MCPProcessClient:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            bufsize=1
         )
 
     def send_request(self, method, params=None, req_id=1):
@@ -20,7 +21,8 @@ class MCPProcessClient:
             "params": params or {},
             "id": req_id
         }
-        self.process.stdin.write(json.dumps(payload) + "\n")
+        json_str = json.dumps(payload) + "\n"
+        self.process.stdin.write(json_str)
         self.process.stdin.flush()
         response_line = self.process.stdout.readline()
         if response_line:
@@ -28,7 +30,12 @@ class MCPProcessClient:
         return {}
 
     def close(self):
-        self.process.terminate()
+        try:
+            self.process.stdin.close()
+            self.process.terminate()
+            self.process.wait(timeout=2)
+        except Exception:
+            self.process.kill()
 
 class AgentOrchestrator:
     def __init__(self):
@@ -40,9 +47,9 @@ class AgentOrchestrator:
         q_lower = prompt.lower()
 
         # 1. Route to Security Agent
-        port_match = re.search(r"\b(\d{1,5})\b", q_lower)
-        if port_match and any(w in q_lower for w in ["risky", "vulnerable", "safe", "risk"]):
-            port_num = int(port_match.group(1))
+        port_matches = re.findall(r"\b(\d{1,5})\b", q_lower)
+        if port_matches and any(w in q_lower for w in ["risky", "vulnerable", "safe", "risk", "check"]):
+            port_num = int(port_matches[0])
             res = self.sec_client.send_request("tools/call", {
                 "name": "check_port_risk",
                 "arguments": {"port": port_num}
@@ -83,13 +90,15 @@ if __name__ == "__main__":
     orchestrator = AgentOrchestrator()
     sample_prompt = "Check if port 3306 is risky and get the latest telemetry voltage readings."
     
-    # Pass your MySQL password and database name here
+    # PUT YOUR LOCAL MYSQL ROOT PASSWORD AND DATABASE NAME HERE:
+    MYSQL_PASSWORD = "YOUR_ACTUAL_MYSQL_PASSWORD"  # e.g., "root" or "admin123"
+    DATABASE_NAME = "YOUR_ACTUAL_DB_NAME"          # e.g., "building_db" or "vinereadings"
+
+    print("--- Sending Combined Prompt to MCP Orchestrator ---")
     output = orchestrator.execute_combined_task(
         prompt=sample_prompt,
-        db_password="YOUR_MYSQL_PASSWORD_HERE",
-        db_name="YOUR_DATABASE_NAME"
+        db_password=MYSQL_PASSWORD,
+        db_name=DATABASE_NAME
     )
-    
-    print("--- Sending Combined Prompt to MCP Orchestrator ---")
     print(output)
     orchestrator.close()
