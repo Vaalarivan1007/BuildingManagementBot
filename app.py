@@ -25,6 +25,9 @@ import plotly.graph_objects as go
 import voice_module as vm  # voice search + live translation (separate file)
 import weather_module as wx  # live weather predictions (separate file)
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from schema_reader import SchemaReader
 from sql_validator import validate_sql, format_sql, ValidationError
 from llm_engine import LLMEngine
@@ -201,7 +204,7 @@ SYSTEM_RULES = [
     "Check vicurrentimbalance (>10%) and vitemp (>60°C) for building hazard alerts."
 ]
 
-def export_knowledge_base_json(schema_dict: dict | None = None, db_name: str = "telemetry_db") -> str:
+def export_knowledge_base_json(schema_dict: dict | None = None, db_name: str = "sunandjay") -> str:
     package = {
         "metadata": {
             "title": "Building Electrical Telemetry AI Knowledge Base",
@@ -217,7 +220,7 @@ def export_knowledge_base_json(schema_dict: dict | None = None, db_name: str = "
     }
     return json.dumps(package, indent=2)
 
-def export_knowledge_base_markdown(schema_text: str = "", db_name: str = "telemetry_db") -> str:
+def export_knowledge_base_markdown(schema_text: str = "", db_name: str = "sunandjay") -> str:
     lines = [
         f"# ⚡ Building Electrical Telemetry Knowledge Base ({db_name})",
         f"*Exported: {time.strftime('%Y-%m-%d %H:%M:%S')}*\n",
@@ -529,11 +532,11 @@ with st.sidebar:
         st.divider()
 
     with st.expander("🔌 Connect Manual DB", expanded="reader" not in st.session_state):
-        host = st.text_input("Host", value="localhost")
-        port = st.number_input("Port", value=3306, step=1)
-        user = st.text_input("Username", value="root")
-        password = st.text_input("Password", type="password")
-        database = st.text_input("Database name")
+        host = st.text_input("Host", value=os.getenv("DB_HOST", "121.242.232.215"))
+        port = st.number_input("Port", value=int(os.getenv("DB_PORT", 3306)), step=1)
+        user = st.text_input("Username", value=os.getenv("DB_USER", "intern01"))
+        password = st.text_input("Password", value=os.getenv("DB_PASSWORD", "Intern01@Rouser#2026"), type="password")
+        database = st.text_input("Database name", value=os.getenv("DB_NAME", "sunandjay"))
         
         if st.button("Connect DB", type="primary", use_container_width=True):
             try:
@@ -552,12 +555,12 @@ with st.sidebar:
         st.markdown("### 🧠 AI Knowledge Base")
         kb_json = export_knowledge_base_json(
             schema_dict=st.session_state.get("schema_dict", {}),
-            db_name=st.session_state.get("db_name", "building_db")
+            db_name=st.session_state.get("db_name", "sunandjay")
         )
         st.download_button(
             label="📦 Export Schema KB (.json)",
             data=kb_json.encode("utf-8"),
-            file_name=f"{st.session_state.get('db_name', 'building')}_knowledge_base.json",
+            file_name=f"{st.session_state.get('db_name', 'sunandjay')}_knowledge_base.json",
             mime="application/json",
             key="dl_kb_json",
             use_container_width=True,
@@ -565,12 +568,12 @@ with st.sidebar:
         
         kb_md = export_knowledge_base_markdown(
             schema_text=st.session_state.get("schema_text", ""),
-            db_name=st.session_state.get("db_name", "building_db")
+            db_name=st.session_state.get("db_name", "sunandjay")
         )
         st.download_button(
             label="📄 Export KB Documentation (.md)",
             data=kb_md.encode("utf-8"),
-            file_name=f"{st.session_state.get('db_name', 'building')}_knowledge_base.md",
+            file_name=f"{st.session_state.get('db_name', 'sunandjay')}_knowledge_base.md",
             mime="text/markdown",
             key="dl_kb_md",
             use_container_width=True,
@@ -752,16 +755,20 @@ def run_pipeline(question: str):
         st.session_state["messages"].append({"role": "user", "content": question})
         with st.status("🛡️ Intercepting request via Security MCP Agent...", expanded=True) as status:
             creds = st.session_state.get("db_creds", {
-                "host": "localhost", "port": 3306, "user": "root", "password": "", "database": "telemetry_db"
+                "host": os.getenv("DB_HOST", "121.242.232.215"),
+                "port": int(os.getenv("DB_PORT", 3306)),
+                "user": os.getenv("DB_USER", "intern01"),
+                "password": os.getenv("DB_PASSWORD", "Intern01@Rouser#2026"),
+                "database": os.getenv("DB_NAME", "sunandjay")
             })
             orchestrator = AgentOrchestrator()
             raw_out = orchestrator.execute_combined_task(
                 prompt=question,
-                host=creds.get("host", "localhost"),
-                port=creds.get("port", 3306),
-                user=creds.get("user", "root"),
-                db_password=creds.get("password", ""),
-                db_name=creds.get("database", "telemetry_db")
+                host=creds.get("host", os.getenv("DB_HOST", "121.242.232.215")),
+                port=creds.get("port", int(os.getenv("DB_PORT", 3306))),
+                user=creds.get("user", os.getenv("DB_USER", "intern01")),
+                db_password=creds.get("password", os.getenv("DB_PASSWORD", "Intern01@Rouser#2026")),
+                db_name=creds.get("database", os.getenv("DB_NAME", "sunandjay"))
             )
             orchestrator.close()
             status.update(label="✅ Security Analysis Complete", state="complete", expanded=False)

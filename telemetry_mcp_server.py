@@ -1,6 +1,11 @@
 import sys
 import json
+import os
 import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from schema_reader import SchemaReader
 from sql_validator import validate_sql, format_sql
 from llm_engine import LLMEngine
@@ -38,11 +43,11 @@ def handle_request(request):
         if tool_name == "query_telemetry":
             try:
                 natural_prompt = args.get("natural_prompt", "")
-                host = args.get("host", "121.242.232.215")
-                port = int(args.get("port", 3306))
-                user = args.get("user", "intern01")
-                password = args.get("password", "Intern01@Rouser#2026")
-                database = args.get("database", "sunandjay")
+                host = args.get("host", os.getenv("DB_HOST", "121.242.232.215"))
+                port = int(args.get("port", os.getenv("DB_PORT", 3306)))
+                user = args.get("user", os.getenv("DB_USER", "intern01"))
+                password = args.get("password", os.getenv("DB_PASSWORD", "Intern01@Rouser#2026"))
+                database = args.get("database", os.getenv("DB_NAME", "sunandjay"))
 
                 reader = SchemaReader(host, port, user, password, database)
                 reader.connect()
