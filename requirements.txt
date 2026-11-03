@@ -1,11 +1,26 @@
-streamlit>=1.36.0
-mysql-connector-python>=8.4.0
-sqlparse>=0.5.0
-ollama>=0.3.0
-pandas>=2.2.0
-plotly>=5.22.0
-openpyxl>=3.1.0
-requests>=2.31.0
-streamlit-mic-recorder>=0.0.8
+# Web Framework & Interface
+streamlit>=1.30.0
+
+# Data Processing & Analytics
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Database Connectors
+mysql-connector-python>=8.0.30
+
+# LLM Frameworks & Local Serving
+ollama>=0.1.0
+langchain>=0.1.0
+langchain-community>=0.0.10
+faiss-cpu>=1.7.4
+
+# Data Visualization
+plotly>=5.18.0
+
+# System, Environment & Utilities
 python-dotenv>=1.0.0
-mcp>=1.0.0
+requests>=2.31.0
+pydantic>=2.0.0
+
+# OPNsense API Integration
+opn-api>=0.5.0

@@ -5,20 +5,22 @@ An AI-driven Building Management System (BMS) converted into a **Model Context P
 ---
 
 ## 🏛️ Architecture Overview
+
+
 +-----------------------+
-                              |   User Prompt (UI)    |
-                              +-----------+-----------+
-                                          |
-                                          v
-                              +-----------------------+
-                              |   Master Orchestrator |
-                              |    (orchestrator.py)  |
-                              +---+-------+-------+---+
-                                  |       |       |
-             JSON-RPC (stdio)     |       |       |     JSON-RPC (stdio)
-         +------------------------+       |       +-------------------------+
-         |                                v                                 |
-         v                        JSON-RPC (stdio)                          v
+                    |   User Prompt (UI)    |
+                    +-----------+-----------+
+                                |
+                                v
+                    +-----------------------+
+                    |  Master Orchestrator  |
+                    |   (orchestrator.py)   |
+                    +---+-------+-------+---+
+                        |       |       |
+     JSON-RPC (stdio)   |       |       |     JSON-RPC (stdio)
++------------------------+       |       +-------------------------+
+|                                v                                 |
+v                        JSON-RPC (stdio)                          v
 +--------------------------+    +---------------------------+    +--------------------------+
 |  Voltage Telemetry Agent |    | Current & Thermal Agent   |    | Security & Network Agent |
 | (voltage_mcp_server.py)  |    |(current_energy_mcp_server)|    | (security_mcp_server.py) |
@@ -26,6 +28,7 @@ An AI-driven Building Management System (BMS) converted into a **Model Context P
 | - query_voltage_metrics  |    | - query_current_energy    |    | - inspect_network        |
 | - phase_voltage_checks   |    | - thermal_imbalance_check |    | - check_port_risk        |
 +--------------------------+    +---------------------------+    | - propose_firewall_rule  |
++--------------------------+
 
 ---
 
@@ -45,8 +48,19 @@ An AI-driven Building Management System (BMS) converted into a **Model Context P
 
 ---
 
-## 🚀 Quickstart Guide
+## ⚙️ Prerequisites & Environment Setup
 
-### 1. Install Dependencies
-```powershell
-pip install -r requirements.txt
+### 1. System Dependencies (Ubuntu / Linux)
+Install Python 3, virtual environment tools, and system libraries required for local LLM orchestration and database connectivity:
+
+```bash
+sudo apt update && sudo apt install -y python3 python3-pip python3-venv git curl
+
+# Install Ollama service
+curl -fsSL [https://ollama.com/install.sh](https://ollama.com/install.sh) | sh
+
+# Download the required model
+ollama pull qwen2.5-coder:7b
+
+# Verify active local models
+ollama list
