@@ -216,11 +216,12 @@ SYSTEM_RULES = [
     "Check vicurrentimbalance (>10%) and vitemp (>60°C) for building hazard alerts."
 ]
 
-def export_knowledge_base_json(schema_dict: dict | None = None, db_name: str = "sunandjay") -> str:
+def export_knowledge_base_json(schema_dict: dict | None = None, db_name: str = "") -> str:
+    default_db = os.getenv("DB_NAME", "")
     package = {
         "metadata": {
             "title": "Building Electrical Telemetry AI Knowledge Base",
-            "database_name": db_name,
+            "database_name": db_name or default_db,
             "version": "2.0.0",
             "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "target_system": "Universal AI Agent / LLM Text-to-SQL Framework"
@@ -232,9 +233,10 @@ def export_knowledge_base_json(schema_dict: dict | None = None, db_name: str = "
     }
     return json.dumps(package, indent=2)
 
-def export_knowledge_base_markdown(schema_text: str = "", db_name: str = "sunandjay") -> str:
+def export_knowledge_base_markdown(schema_text: str = "", db_name: str = "") -> str:
+    active_db = db_name or os.getenv("DB_NAME", "")
     lines = [
-        f"# ⚡ Building Electrical Telemetry Knowledge Base ({db_name})",
+        f"# ⚡ Building Electrical Telemetry Knowledge Base ({active_db})",
         f"*Exported: {time.strftime('%Y-%m-%d %H:%M:%S')}*\n",
         "## 1. System Overview",
         "This knowledge base defines the data schema, telemetry metrics, and business rules for an industrial Building Management System (BMS) monitoring multi-phase electrical power, voltages, currents, thermal parameters, and sensor health.\n",
@@ -544,11 +546,11 @@ with st.sidebar:
         st.divider()
 
     with st.expander("🔌 Connect Manual DB", expanded="reader" not in st.session_state):
-        host = st.text_input("Host", value=os.getenv("DB_HOST", "121.242.232.215"))
+        host = st.text_input("Host", value=os.getenv("DB_HOST", ""))
         port = st.number_input("Port", value=int(os.getenv("DB_PORT", 3306)), step=1)
-        user = st.text_input("Username", value=os.getenv("DB_USER", "intern01"))
-        password = st.text_input("Password", value=os.getenv("DB_PASSWORD", "Intern01@Rouser#2026"), type="password")
-        database = st.text_input("Database name", value=os.getenv("DB_NAME", "sunandjay"))
+        user = st.text_input("Username", value=os.getenv("DB_USER", ""))
+        password = st.text_input("Password", value=os.getenv("DB_PASSWORD", ""), type="password")
+        database = st.text_input("Database name", value=os.getenv("DB_NAME", ""))
         
         if st.button("Connect DB", type="primary", use_container_width=True):
             try:
@@ -567,12 +569,12 @@ with st.sidebar:
         st.markdown("### 🧠 AI Knowledge Base")
         kb_json = export_knowledge_base_json(
             schema_dict=st.session_state.get("schema_dict", {}),
-            db_name=st.session_state.get("db_name", "sunandjay")
+            db_name=st.session_state.get("db_name", "")
         )
         st.download_button(
             label="📦 Export Schema KB (.json)",
             data=kb_json.encode("utf-8"),
-            file_name=f"{st.session_state.get('db_name', 'sunandjay')}_knowledge_base.json",
+            file_name=f"{st.session_state.get('db_name', 'database')}_knowledge_base.json",
             mime="application/json",
             key="dl_kb_json",
             use_container_width=True,
@@ -580,12 +582,12 @@ with st.sidebar:
         
         kb_md = export_knowledge_base_markdown(
             schema_text=st.session_state.get("schema_text", ""),
-            db_name=st.session_state.get("db_name", "sunandjay")
+            db_name=st.session_state.get("db_name", "")
         )
         st.download_button(
             label="📄 Export KB Documentation (.md)",
             data=kb_md.encode("utf-8"),
-            file_name=f"{st.session_state.get('db_name', 'sunandjay')}_knowledge_base.md",
+            file_name=f"{st.session_state.get('db_name', 'database')}_knowledge_base.md",
             mime="text/markdown",
             key="dl_kb_md",
             use_container_width=True,
@@ -731,20 +733,20 @@ def run_pipeline(question: str):
                 status.update(label="✅ Security Analysis Complete", state="complete", expanded=False)
             elif MCP_ORCHESTRATOR_AVAILABLE:
                 creds = st.session_state.get("db_creds", {
-                    "host": os.getenv("DB_HOST", "121.242.232.215"),
+                    "host": os.getenv("DB_HOST", ""),
                     "port": int(os.getenv("DB_PORT", 3306)),
-                    "user": os.getenv("DB_USER", "intern01"),
-                    "password": os.getenv("DB_PASSWORD", "Intern01@Rouser#2026"),
-                    "database": os.getenv("DB_NAME", "sunandjay")
+                    "user": os.getenv("DB_USER", ""),
+                    "password": os.getenv("DB_PASSWORD", ""),
+                    "database": os.getenv("DB_NAME", "")
                 })
                 orchestrator = AgentOrchestrator()
                 raw_out = orchestrator.execute_combined_task(
                     prompt=question,
-                    host=creds.get("host", os.getenv("DB_HOST", "121.242.232.215")),
+                    host=creds.get("host", os.getenv("DB_HOST", "")),
                     port=creds.get("port", int(os.getenv("DB_PORT", 3306))),
-                    user=creds.get("user", os.getenv("DB_USER", "intern01")),
-                    db_password=creds.get("password", os.getenv("DB_PASSWORD", "Intern01@Rouser#2026")),
-                    db_name=creds.get("database", os.getenv("DB_NAME", "sunandjay"))
+                    user=creds.get("user", os.getenv("DB_USER", "")),
+                    db_password=creds.get("password", os.getenv("DB_PASSWORD", "")),
+                    db_name=creds.get("database", os.getenv("DB_NAME", ""))
                 )
                 orchestrator.close()
                 status.update(label="✅ Security Analysis Complete", state="complete", expanded=False)
@@ -876,7 +878,7 @@ def run_pipeline(question: str):
 # -----------------------------------------------------------------------------
 st.markdown("# ⚡ Building Management AI Master Agent")
 
-tab1, tab2 = st.tabs(["💬 BMS AI Chat & Telemetry", "🛡️ OPNsense Security Engine"])
+tab1, tab2 = st.tabs(["💬 BMS AI Chat & Telemetry", "🛡️ OPNsense Security Engine (main.py)"])
 
 with tab1:
     if "reader" not in st.session_state:
