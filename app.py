@@ -17,6 +17,7 @@ st.set_page_config(
 # -----------------------------------------------------------------------------
 import json
 import os
+import re
 import sqlite3
 import time
 import pandas as pd
@@ -38,6 +39,17 @@ try:
     MCP_ORCHESTRATOR_AVAILABLE = True
 except ImportError:
     MCP_ORCHESTRATOR_AVAILABLE = False
+
+# Import main.py (OPNsense Security Engine) safely
+try:
+    import main as opn_engine
+    OPNSENSE_AVAILABLE = True
+except ImportError:
+    try:
+        import opn as opn_engine
+        OPNSENSE_AVAILABLE = True
+    except ImportError:
+        OPNSENSE_AVAILABLE = False
 
 DB_MEMORY_FILE = "db_history.json"
 BOOKMARKS_FILE = "categorized_bookmarks.json"
@@ -658,47 +670,7 @@ with st.sidebar:
         st.rerun()
 
 # -----------------------------------------------------------------------------
-# 9. MAIN PAGE INTERFACE
-# -----------------------------------------------------------------------------
-st.markdown("# ⚡ Building Management AI Master Agent")
-
-if "reader" not in st.session_state:
-    st.info("👈 Please connect to your Building Management Database in the sidebar to begin.")
-
-# Chat history rendering area
-chat_container = st.container()
-with chat_container:
-    for idx, msg in enumerate(st.session_state["messages"]):
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            
-            if "df" in msg and msg["df"] is not None and not msg["df"].empty:
-                df = msg["df"]
-                st.dataframe(df, use_container_width=True)
-                
-                q_lower = msg.get("question", "").lower()
-                plot_keywords = ["plot", "trend", "graph", "chart", "draw", "visualize", "diagram"]
-                if any(k in q_lower for k in plot_keywords):
-                    chart = build_master_chart(msg.get("question", ""), df)
-                    if chart is not None:
-                        st.plotly_chart(chart, use_container_width=True, key=f"hist_chart_{idx}")
-
-                json_bytes = df.to_json(orient="records", date_format="iso", indent=2).encode("utf-8")
-                st.download_button("📋 Export Query Data (.json)", json_bytes, "query_data.json", "application/json", key=f"dl_json_{idx}")
-
-                if msg.get("question"):
-                    q_text = msg["question"]
-                    with st.popover("🔖 Bookmark Prompt"):
-                        target_folder = st.selectbox("Folder", list(st.session_state["bookmarks"].keys()), key=f"fold_sel_{idx}")
-                        if st.button("Save Bookmark", key=f"save_bm_btn_{idx}"):
-                            if q_text not in st.session_state["bookmarks"][target_folder]:
-                                st.session_state["bookmarks"][target_folder].append(q_text)
-                                save_bookmarks(st.session_state["bookmarks"])
-                                st.toast(f"Saved to {target_folder}!")
-                                st.rerun()
-
-# -----------------------------------------------------------------------------
-# 10. EXECUTION PIPELINE WITH TRAIN_DB ENGINE & MCP ROUTING
+# 9. EXECUTION PIPELINE WITH TRAIN_DB ENGINE & DIRECT MAIN.PY / OPNSENSE ROUTING
 # -----------------------------------------------------------------------------
 def _extract_sql(raw: str) -> str:
     """Strip markdown fences / 'sql' labels so validate_sql gets a clean statement."""
@@ -747,39 +719,45 @@ def run_pipeline(question: str):
             st.rerun()
             return
 
-    # 3. Security / Firewall Interception via MCP (if orchestrator & security keywords are present)
-    security_keywords = ["port", "firewall", "block", "security", "vulnerable", "risky"]
+    # 3. Security / Firewall Interception via main.py / opn_engine OR MCP Orchestrator
+    security_keywords = ["port", "firewall", "block", "security", "vulnerable", "risky", "opnsense"]
     is_security_query = any(k in clean_q for k in security_keywords)
     
-    if is_security_query and MCP_ORCHESTRATOR_AVAILABLE:
+    if is_security_query:
         st.session_state["messages"].append({"role": "user", "content": question})
-        with st.status("🛡️ Intercepting request via Security MCP Agent...", expanded=True) as status:
-            creds = st.session_state.get("db_creds", {
-                "host": os.getenv("DB_HOST", "121.242.232.215"),
-                "port": int(os.getenv("DB_PORT", 3306)),
-                "user": os.getenv("DB_USER", "intern01"),
-                "password": os.getenv("DB_PASSWORD", "Intern01@Rouser#2026"),
-                "database": os.getenv("DB_NAME", "sunandjay")
-            })
-            orchestrator = AgentOrchestrator()
-            raw_out = orchestrator.execute_combined_task(
-                prompt=question,
-                host=creds.get("host", os.getenv("DB_HOST", "121.242.232.215")),
-                port=creds.get("port", int(os.getenv("DB_PORT", 3306))),
-                user=creds.get("user", os.getenv("DB_USER", "intern01")),
-                db_password=creds.get("password", os.getenv("DB_PASSWORD", "Intern01@Rouser#2026")),
-                db_name=creds.get("database", os.getenv("DB_NAME", "sunandjay"))
-            )
-            orchestrator.close()
-            status.update(label="✅ Security Analysis Complete", state="complete", expanded=False)
-            
-        try:
-            res_dict = json.loads(raw_out)
-            sec_ans = res_dict.get("security_agent", raw_out)
-        except Exception:
-            sec_ans = raw_out
+        with st.status("🛡️ Intercepting request via Security Engine (main.py)...", expanded=True) as status:
+            if OPNSENSE_AVAILABLE:
+                sec_ans = opn_engine.handle(question)
+                status.update(label="✅ Security Analysis Complete", state="complete", expanded=False)
+            elif MCP_ORCHESTRATOR_AVAILABLE:
+                creds = st.session_state.get("db_creds", {
+                    "host": os.getenv("DB_HOST", "121.242.232.215"),
+                    "port": int(os.getenv("DB_PORT", 3306)),
+                    "user": os.getenv("DB_USER", "intern01"),
+                    "password": os.getenv("DB_PASSWORD", "Intern01@Rouser#2026"),
+                    "database": os.getenv("DB_NAME", "sunandjay")
+                })
+                orchestrator = AgentOrchestrator()
+                raw_out = orchestrator.execute_combined_task(
+                    prompt=question,
+                    host=creds.get("host", os.getenv("DB_HOST", "121.242.232.215")),
+                    port=creds.get("port", int(os.getenv("DB_PORT", 3306))),
+                    user=creds.get("user", os.getenv("DB_USER", "intern01")),
+                    db_password=creds.get("password", os.getenv("DB_PASSWORD", "Intern01@Rouser#2026")),
+                    db_name=creds.get("database", os.getenv("DB_NAME", "sunandjay"))
+                )
+                orchestrator.close()
+                status.update(label="✅ Security Analysis Complete", state="complete", expanded=False)
+                try:
+                    res_dict = json.loads(raw_out)
+                    sec_ans = res_dict.get("security_agent", raw_out)
+                except Exception:
+                    sec_ans = raw_out
+            else:
+                sec_ans = "Security module not found."
+                status.update(label="❌ Security Module Unavailable", state="error")
 
-        st.session_state["messages"].append({"role": "assistant", "content": f"### 🛡️ Security Agent Response\n{sec_ans}"})
+        st.session_state["messages"].append({"role": "assistant", "content": f"### 🛡️ Security Agent Response\n```text\n{sec_ans}\n```"})
         st.rerun()
         return
 
@@ -894,7 +872,74 @@ def run_pipeline(question: str):
     st.rerun()
 
 # -----------------------------------------------------------------------------
-# 11. MIC BUTTON (POSITIONED VIA CSS AT BOTTOM-LEFT INSIDE CHAT INPUT BOX)
+# 10. MAIN PAGE INTERFACE & DASHBOARD TABS
+# -----------------------------------------------------------------------------
+st.markdown("# ⚡ Building Management AI Master Agent")
+
+tab1, tab2 = st.tabs(["💬 BMS AI Chat & Telemetry", "🛡️ OPNsense Security Engine"])
+
+with tab1:
+    if "reader" not in st.session_state:
+        st.info("👈 Please connect to your Building Management Database in the sidebar to begin.")
+
+    # Chat history rendering area
+    chat_container = st.container()
+    with chat_container:
+        for idx, msg in enumerate(st.session_state["messages"]):
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+                
+                if "df" in msg and msg["df"] is not None and not msg["df"].empty:
+                    df = msg["df"]
+                    st.dataframe(df, use_container_width=True)
+                    
+                    q_lower = msg.get("question", "").lower()
+                    plot_keywords = ["plot", "trend", "graph", "chart", "draw", "visualize", "diagram"]
+                    if any(k in q_lower for k in plot_keywords):
+                        chart = build_master_chart(msg.get("question", ""), df)
+                        if chart is not None:
+                            st.plotly_chart(chart, use_container_width=True, key=f"hist_chart_{idx}")
+
+                    json_bytes = df.to_json(orient="records", date_format="iso", indent=2).encode("utf-8")
+                    st.download_button("📋 Export Query Data (.json)", json_bytes, "query_data.json", "application/json", key=f"dl_json_{idx}")
+
+                    if msg.get("question"):
+                        q_text = msg["question"]
+                        with st.popover("🔖 Bookmark Prompt"):
+                            target_folder = st.selectbox("Folder", list(st.session_state["bookmarks"].keys()), key=f"fold_sel_{idx}")
+                            if st.button("Save Bookmark", key=f"save_bm_btn_{idx}"):
+                                if q_text not in st.session_state["bookmarks"][target_folder]:
+                                    st.session_state["bookmarks"][target_folder].append(q_text)
+                                    save_bookmarks(st.session_state["bookmarks"])
+                                    st.toast(f"Saved to {target_folder}!")
+                                    st.rerun()
+
+with tab2:
+    st.markdown("### 🛡️ OPNsense Firewall & Network Inspector")
+    st.caption("Integrated OPNsense dry-run security engine, risky port checking, and proposal generator.")
+
+    col_sec1, col_sec2 = st.columns([0.6, 0.4])
+
+    with col_sec1:
+        sec_query = st.text_input("Enter a security command or port check (e.g. 'block port 3389', 'check port 3306', 'risky ports')", key="sec_tab_input")
+        if st.button("Run Security Inspection", type="primary", use_container_width=True):
+            if OPNSENSE_AVAILABLE and sec_query:
+                output = opn_engine.handle(sec_query)
+                st.code(output, language="text")
+            elif not OPNSENSE_AVAILABLE:
+                st.error("OPNsense module (main.py / opn.py) not detected in working directory.")
+
+    with col_sec2:
+        st.markdown("#### ⚡ Quick Security Actions")
+        if st.button("🔍 Check Commonly Risky Ports", use_container_width=True):
+            if OPNSENSE_AVAILABLE:
+                st.code(opn_engine.vulnerable_ports_text(), language="text")
+        if st.button("🚫 Proposal: Block Port 3389 (RDP)", use_container_width=True):
+            if OPNSENSE_AVAILABLE:
+                st.code(opn_engine.propose_block("block port 3389"), language="text")
+
+# -----------------------------------------------------------------------------
+# 11. MIC BUTTON & INPUT HANDLING
 # -----------------------------------------------------------------------------
 
 # Handle pending bookmark query execution
@@ -907,7 +952,7 @@ if st.session_state["pending_query"]:
 vm.render_voice_input()
 
 # Native Chat Input
-question = st.chat_input("Ask a question about building telemetry...")
+question = st.chat_input("Ask a question about building telemetry or firewall security...")
 if question:
     if wx.should_handle(question):
         wx.answer_in_chat(question)    # live weather predictions (research analyst mode)
