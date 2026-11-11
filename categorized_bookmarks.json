@@ -1,7 +1,10 @@
 {
-    "Energy Trends": [],
+    "Energy Trends": [
+        "touch me the latest main readings"
+    ],
     "Device Audits": [],
     "General": [
-        "show me vineid 1 readings"
+        "show me vineid 1 readings",
+        "[SYSTEM TEST MATRIX]: Execute a full diagnostic check across all agents simultaneously. \n\n1. TELEMETRY AGENT: Query vinereadings for vineid 1 (Main Unit). Retrieve the latest 5 records showing reading_date from vicreatedtime, formatted reading_time from vidatetime, phase voltages (virv, viyv, vibv), phase currents (viri, viyi, vibi), enclosure temperature (vitemp), and current imbalance percentage. If temperature exceeds 60\u00b0C or current imbalance exceeds 10%, report a hazard warning. \n\n2. SECURITY AGENT (OPNsense): Conduct a security audit on inbound TCP port 3389 (RDP) and MySQL port 3306. Verify if port 3389 is considered high-risk, generate a dry-run rule proposal to block port 3389 on the WAN interface, and print the list of commonly vulnerable ports.\n\n3. RESEARCH / AUXILIARY AGENT: Provide a brief environmental status report and confirm persistent train_db rules are loaded."
     ]
 }
