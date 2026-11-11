@@ -724,9 +724,10 @@ def run_pipeline(question: str):
     # 3. Security / Firewall Interception via main.py / opn_engine OR MCP Orchestrator
     security_keywords = ["port", "firewall", "block", "security", "vulnerable", "risky", "opnsense"]
     is_security_query = any(k in clean_q for k in security_keywords)
+    is_system_matrix = "[system test matrix]" in clean_q or "telemetry agent:" in clean_q or "security agent" in clean_q
     
+    sec_ans = ""
     if is_security_query:
-        st.session_state["messages"].append({"role": "user", "content": question})
         with st.status("🛡️ Intercepting request via Security Engine (main.py)...", expanded=True) as status:
             if OPNSENSE_AVAILABLE:
                 sec_ans = opn_engine.handle(question)
@@ -759,9 +760,13 @@ def run_pipeline(question: str):
                 sec_ans = "Security module not found."
                 status.update(label="❌ Security Module Unavailable", state="error")
 
-        st.session_state["messages"].append({"role": "assistant", "content": f"### 🛡️ Security Agent Response\n```text\n{sec_ans}\n```"})
-        st.rerun()
-        return
+        if not is_system_matrix:
+            st.session_state["messages"].append({"role": "user", "content": question})
+            st.session_state["messages"].append({"role": "assistant", "content": f"### 🛡️ Security Agent Response\n```text\n{sec_ans}\n```"})
+            st.rerun()
+            return
+        else:
+            st.session_state["matrix_sec_ans"] = sec_ans
 
     # 4. Core Direct Database Pipeline
     if "reader" not in st.session_state:
@@ -846,9 +851,14 @@ def run_pipeline(question: str):
 
             if last_error:
                 status.update(label="❌ Query could not be completed", state="error")
+                error_msg = f"⚠️ I could not build a working query for this request.\n\n**Reason:** {last_error}\n\nTry rephrasing the question (mention the table, device or time range)."
+                if "matrix_sec_ans" in st.session_state:
+                    error_msg = f"### 🛡️ Security Agent Response\n```text\n{st.session_state['matrix_sec_ans']}\n```\n\n" + error_msg
+                    del st.session_state["matrix_sec_ans"]
+
                 st.session_state["messages"].append({
                     "role": "assistant",
-                    "content": f"⚠️ I could not build a working query for this request.\n\n**Reason:** {last_error}\n\nTry rephrasing the question (mention the table, device or time range).",
+                    "content": error_msg,
                     "sql": pretty_sql or raw_sql,
                     "question": question
                 })
@@ -865,6 +875,10 @@ def run_pipeline(question: str):
         else:
             result_preview = df.head(15).to_string(index=False)
         answer = llm.generate_answer(full_prompt, pretty_sql, result_preview)
+
+        if "matrix_sec_ans" in st.session_state:
+            answer = f"### 🛡️ Security Agent Response\n```text\n{st.session_state['matrix_sec_ans']}\n```\n\n" + answer
+            del st.session_state["matrix_sec_ans"]
 
         status.update(label="✅ Completed successfully!", state="complete", expanded=False)
 
