@@ -62,23 +62,67 @@ class AgentOrchestrator:
         results = {}
         q_lower = prompt.lower()
 
-        # Sanitize prompt for telemetry so "port 3306" isn't converted into a "vineid = 3306" filter
-        telemetry_prompt = re.sub(r"\bport\s+\d{1,5}\b", "", prompt, flags=re.IGNORECASE).strip()
+        # Named protocol to port mapping for automatic recognition
+        protocol_ports = {
+            "tftp": 69,
+            "modbus": 502,
+            "bacnet": 47808,
+            "rdp": 3389,
+            "mysql": 3306,
+            "telnet": 23,
+            "ftp": 21,
+            "ssh": 22,
+            "snmp": 161,
+            "mqtt": 1883,
+            "redis": 6379,
+            "smb": 445
+        }
 
-        # 1. Route to Security Agent
-        port_matches = re.findall(r"\bport\s+(\d{1,5})\b", q_lower)
+        # 1. Route to Security Agent (All Firewall & Port Commands)
+        port_num = None
+        port_matches = re.findall(r"\b(?:port\s*[:#]?\s*|is\s+port\s+)(\d{1,5})\b", q_lower)
+        if not port_matches:
+            port_matches = re.findall(r"\b(?:is\s+)?(\d{1,5})\s+(?:safe|secure|risky|open|vulnerable)\b", q_lower)
+
         if port_matches:
             port_num = int(port_matches[0])
+        else:
+            for proto, p_num in protocol_ports.items():
+                if proto in q_lower and any(w in q_lower for w in ["safe", "port", "check", "block", "firewall", "risk"]):
+                    port_num = p_num
+                    break
+
+        security_keywords = [
+            "port", "firewall", "block", "allow", "security", "network", "rule", "rules",
+            "state", "states", "connection", "connections", "service", "services",
+            "gateway", "interface", "interfaces", "traffic", "bandwidth", "firmware",
+            "tftp", "modbus", "bacnet", "rdp", "vulnerable", "risky"
+        ]
+
+        if port_num is not None:
             res = self.sec_client.send_request("tools/call", {
                 "name": "check_port_risk",
-                "arguments": {"port": port_num}
+                "arguments": {"port": port_num, "query": prompt}
             })
             content = res.get("result", {}).get("content", [{}])[0].get("text", "")
             results["security_agent"] = content
-        elif any(k in q_lower for k in ["port", "firewall", "block", "security", "network"]):
+        elif any(k in q_lower for k in security_keywords):
+            if any(k in q_lower for k in ["block", "propose", "deny", "drop", "allow"]):
+                tool_name = "propose_firewall_rule"
+            elif any(k in q_lower for k in ["state", "connections", "active connection"]):
+                tool_name = "query_firewall_states"
+            elif any(k in q_lower for k in ["rule", "rules", "policy"]):
+                tool_name = "list_firewall_rules"
+            elif any(k in q_lower for k in ["service", "services", "listening", "socket"]):
+                tool_name = "audit_services"
+            elif any(k in q_lower for k in ["matrix", "all ports"]):
+                tool_name = "get_risk_matrix"
+            else:
+                tool_name = "inspect_network"
+
             res = self.sec_client.send_request("tools/call", {
-                "name": "inspect_network",
-                "arguments": {"query": prompt}
+                "name": tool_name,
+                "arguments": {"query": prompt, "search": prompt}
             })
             content = res.get("result", {}).get("content", [{}])[0].get("text", "")
             results["security_agent"] = content
@@ -117,6 +161,15 @@ class AgentOrchestrator:
 
         return json.dumps(results, indent=2)
 
+    def execute_security_inspection(self, query: str) -> str:
+        """Helper to run a security inspection directly through the security agent."""
+        res_json = self.execute_combined_task(prompt=query)
+        try:
+            data = json.loads(res_json)
+            return data.get("security_agent", res_json)
+        except Exception:
+            return res_json
+
     def close(self):
         self.sec_client.close()
         self.volt_client.close()
@@ -135,8 +188,9 @@ def format_mcp_summary(raw_json_str: str) -> str:
 
     # 1. Security Agent Summary
     if "security_agent" in data and data["security_agent"]:
-        lines.append("🛡️ [NETWORK & SECURITY AGENT]")
-        lines.append(f"   └─ Audit Result: {data['security_agent']}\n")
+        lines.append("🛡️ [NETWORK & FIREWALL SECURITY AGENT AUDIT]")
+        lines.append(data["security_agent"])
+        lines.append("")
 
     # 2. Voltage Agent Summary
     if "voltage_agent" in data and data["voltage_agent"]:

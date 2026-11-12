@@ -40,13 +40,13 @@ try:
 except ImportError:
     MCP_ORCHESTRATOR_AVAILABLE = False
 
-# Import main.py (OPNsense Security Engine) safely
+# Import OPNsense Security Engine safely
 try:
-    import main as opn_engine
+    import opnsense_dryrun as opn_engine
     OPNSENSE_AVAILABLE = True
 except ImportError:
     try:
-        import opn as opn_engine
+        import main as opn_engine
         OPNSENSE_AVAILABLE = True
     except ImportError:
         OPNSENSE_AVAILABLE = False
@@ -721,48 +721,52 @@ def run_pipeline(question: str):
             st.rerun()
             return
 
-    # 3. Security / Firewall Interception via main.py / opn_engine OR MCP Orchestrator
-    security_keywords = ["port", "firewall", "block", "security", "vulnerable", "risky", "opnsense"]
+    # 3. Security & Firewall Interception via Security Agent (MCP) or OPNsense Dry-Run Engine
+    security_keywords = [
+        "port", "firewall", "block", "allow", "security", "vulnerable", "risky",
+        "opnsense", "state", "states", "connection", "connections", "service",
+        "services", "interface", "interfaces", "gateway", "traffic", "rules",
+        "tftp", "modbus", "bacnet", "rdp", "telnet", "ftp"
+    ]
     is_security_query = any(k in clean_q for k in security_keywords)
+
+    telemetry_terms = [
+        "voltage", "virv", "viyv", "vibv", "vinv", "current", "viri", "viyi",
+        "vibi", "imbalance", "energy", "temp", "thermal", "select", "reading",
+        "readings", "battery", "vibattery", "hourwise", "phase", "power"
+    ]
+    is_telemetry_query = any(t in clean_q for t in telemetry_terms)
     is_system_matrix = "[system test matrix]" in clean_q or "telemetry agent:" in clean_q or "security agent" in clean_q
     
     sec_ans = ""
     if is_security_query:
-        with st.status("🛡️ Intercepting request via Security Engine (main.py)...", expanded=True) as status:
-            if OPNSENSE_AVAILABLE:
+        with st.status("🛡️ Security Agent inspecting OPNsense firewall...", expanded=True) as status:
+            if MCP_ORCHESTRATOR_AVAILABLE:
+                try:
+                    orchestrator = AgentOrchestrator()
+                    sec_ans = orchestrator.execute_security_inspection(question)
+                    orchestrator.close()
+                    status.update(label="✅ Security Agent Inspection Complete", state="complete", expanded=False)
+                except Exception as e:
+                    if OPNSENSE_AVAILABLE:
+                        sec_ans = opn_engine.handle(question)
+                        status.update(label="✅ OPNsense Inspection Complete (Engine Fallback)", state="complete", expanded=False)
+                    else:
+                        sec_ans = f"Security inspection failed: {e}"
+                        status.update(label="❌ Security Inspection Failed", state="error")
+            elif OPNSENSE_AVAILABLE:
                 sec_ans = opn_engine.handle(question)
                 status.update(label="✅ Security Analysis Complete", state="complete", expanded=False)
-            elif MCP_ORCHESTRATOR_AVAILABLE:
-                creds = st.session_state.get("db_creds", {
-                    "host": os.getenv("DB_HOST", ""),
-                    "port": int(os.getenv("DB_PORT", 3306)),
-                    "user": os.getenv("DB_USER", ""),
-                    "password": os.getenv("DB_PASSWORD", ""),
-                    "database": os.getenv("DB_NAME", "")
-                })
-                orchestrator = AgentOrchestrator()
-                raw_out = orchestrator.execute_combined_task(
-                    prompt=question,
-                    host=creds.get("host", os.getenv("DB_HOST", "")),
-                    port=creds.get("port", int(os.getenv("DB_PORT", 3306))),
-                    user=creds.get("user", os.getenv("DB_USER", "")),
-                    db_password=creds.get("password", os.getenv("DB_PASSWORD", "")),
-                    db_name=creds.get("database", os.getenv("DB_NAME", ""))
-                )
-                orchestrator.close()
-                status.update(label="✅ Security Analysis Complete", state="complete", expanded=False)
-                try:
-                    res_dict = json.loads(raw_out)
-                    sec_ans = res_dict.get("security_agent", raw_out)
-                except Exception:
-                    sec_ans = raw_out
             else:
                 sec_ans = "Security module not found."
                 status.update(label="❌ Security Module Unavailable", state="error")
 
-        if not is_system_matrix:
+        if not is_telemetry_query and not is_system_matrix:
             st.session_state["messages"].append({"role": "user", "content": question})
-            st.session_state["messages"].append({"role": "assistant", "content": f"### 🛡️ Security Agent Response\n```text\n{sec_ans}\n```"})
+            st.session_state["messages"].append({
+                "role": "assistant",
+                "content": f"### 🛡️ Security Agent - OPNsense Firewall Inspection\n```text\n{sec_ans}\n```"
+            })
             st.rerun()
             return
         else:
@@ -892,7 +896,7 @@ def run_pipeline(question: str):
 # -----------------------------------------------------------------------------
 st.markdown("# ⚡ Building Management AI Master Agent")
 
-tab1, tab2 = st.tabs(["💬 BMS AI Chat & Telemetry", "🛡️ OPNsense Security Engine (main.py)"])
+tab1, tab2 = st.tabs(["💬 BMS AI Chat & Telemetry", "🛡️ OPNsense Security Engine"])
 
 with tab1:
     if "reader" not in st.session_state:
@@ -931,28 +935,73 @@ with tab1:
                                     st.rerun()
 
 with tab2:
-    st.markdown("### 🛡️ OPNsense Firewall & Network Inspector")
-    st.caption("Integrated OPNsense dry-run security engine, risky port checking, and proposal generator.")
+    st.markdown("### 🛡️ OPNsense Firewall & Port Security Command Center")
+    st.caption("Integrated OPNsense dry-run security engine, risky port checks, and firewall inspection generator.")
 
-    col_sec1, col_sec2 = st.columns([0.6, 0.4])
+    if OPNSENSE_AVAILABLE:
+        st.info(f"🔒 **Target Appliance:** `{opn_engine.HOST}` | **Execution Mode:** `DRY-RUN (Safe Simulation)` | **API Status:** `Credentials Loaded`")
+    else:
+        st.warning("⚠️ OPNsense module not detected in working directory.")
+
+    col_sec1, col_sec2 = st.columns([0.55, 0.45])
 
     with col_sec1:
-        sec_query = st.text_input("Enter a security command or port check (e.g. 'block port 3389', 'check port 3306', 'risky ports')", key="sec_tab_input")
-        if st.button("Run Security Inspection", type="primary", use_container_width=True):
+        st.markdown("#### 🔍 Custom Firewall & Port Inspection")
+        sec_query = st.text_input(
+            "Enter a security command or port check",
+            placeholder="e.g. 'is port 69 safe', 'check port 3306', 'block port 3389', 'show firewall rules', 'query states'",
+            key="sec_tab_input"
+        )
+        if st.button("🚀 Run Security Inspection", type="primary", use_container_width=True):
             if OPNSENSE_AVAILABLE and sec_query:
                 output = opn_engine.handle(sec_query)
                 st.code(output, language="text")
             elif not OPNSENSE_AVAILABLE:
-                st.error("OPNsense module (main.py / opn.py) not detected in working directory.")
+                st.error("OPNsense module (opnsense_dryrun.py) not available.")
+            else:
+                st.warning("Please enter a query or select a quick action.")
 
     with col_sec2:
-        st.markdown("#### ⚡ Quick Security Actions")
-        if st.button("🔍 Check Commonly Risky Ports", use_container_width=True):
-            if OPNSENSE_AVAILABLE:
-                st.code(opn_engine.vulnerable_ports_text(), language="text")
-        if st.button("🚫 Proposal: Block Port 3389 (RDP)", use_container_width=True):
-            if OPNSENSE_AVAILABLE:
-                st.code(opn_engine.propose_block("block port 3389"), language="text")
+        st.markdown("#### ⚡ Quick Port Safety Checks")
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            if st.button("🔍 Port 69 (TFTP UDP)", use_container_width=True):
+                if OPNSENSE_AVAILABLE:
+                    st.code(opn_engine.handle("is port 69 safe"), language="text")
+            if st.button("🔍 Port 3306 (MySQL DB)", use_container_width=True):
+                if OPNSENSE_AVAILABLE:
+                    st.code(opn_engine.handle("is port 3306 safe"), language="text")
+            if st.button("🔍 Port 502 (Modbus BMS)", use_container_width=True):
+                if OPNSENSE_AVAILABLE:
+                    st.code(opn_engine.handle("is port 502 safe"), language="text")
+
+        with col_p2:
+            if st.button("🔍 Port 47808 (BACnet)", use_container_width=True):
+                if OPNSENSE_AVAILABLE:
+                    st.code(opn_engine.handle("is port 47808 safe"), language="text")
+            if st.button("🔍 Port 3389 (RDP)", use_container_width=True):
+                if OPNSENSE_AVAILABLE:
+                    st.code(opn_engine.handle("is port 3389 safe"), language="text")
+            if st.button("🚫 Block Port 3389", use_container_width=True):
+                if OPNSENSE_AVAILABLE:
+                    st.code(opn_engine.propose_block("block port 3389"), language="text")
+
+        st.markdown("#### 🛠️ Firewall Command Audits")
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            if st.button("📜 Firewall Rules", use_container_width=True):
+                if OPNSENSE_AVAILABLE:
+                    st.code(opn_engine.handle("show firewall rules"), language="text")
+            if st.button("📊 Query pf States", use_container_width=True):
+                if OPNSENSE_AVAILABLE:
+                    st.code(opn_engine.handle("query active states"), language="text")
+        with col_c2:
+            if st.button("⚙️ Listening Daemons", use_container_width=True):
+                if OPNSENSE_AVAILABLE:
+                    st.code(opn_engine.handle("listening socket services"), language="text")
+            if st.button("📋 Full Risk Matrix", use_container_width=True):
+                if OPNSENSE_AVAILABLE:
+                    st.code(opn_engine.vulnerable_ports_text(), language="text")
 
 # -----------------------------------------------------------------------------
 # 11. MIC BUTTON & INPUT HANDLING
