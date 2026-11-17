@@ -32,6 +32,8 @@ load_dotenv()
 from schema_reader import SchemaReader
 from sql_validator import validate_sql, format_sql, ValidationError
 from llm_engine import LLMEngine
+import bms_tools
+from agent_core import BMSAgent
 
 # Import AgentOrchestrator conditionally/safely if present
 try:
@@ -690,205 +692,94 @@ def _extract_sql(raw: str) -> str:
 def run_pipeline(question: str):
     clean_q = question.strip().lower()
 
-    # 1. Handle Greetings
+    # 1. Immediate greetings handler
     greetings = {"hi", "hello", "hey", "hola", "good morning", "good evening"}
     if clean_q in greetings:
         st.session_state["messages"].append({"role": "user", "content": question})
-        reply = f"Hello! Ready to analyze your building telemetry. Connected to **{st.session_state.get('db_name', 'database')}**."
+        reply = f"Hello! Ready to analyze your building telemetry or inspect firewall security. Connected to **{st.session_state.get('db_name', 'database')}**."
         st.session_state["messages"].append({"role": "assistant", "content": reply})
         st.rerun()
         return
 
-    # 2. Memory Statement Trigger List
-    memory_triggers = ["important", "core for", "personal use", "remember that", "note that", "note if", "vital information", "alias"]
-    is_memory_only_statement = any(phrase in clean_q for phrase in memory_triggers) and not any(
+    # 2. Immediate memory statement handler
+    memory_triggers = ["important", "core for", "personal use", "remember that", "note that", "note if", "vital information", "save alias"]
+    is_memory_only = any(phrase in clean_q for phrase in memory_triggers) and not any(
         cmd in clean_q for cmd in ["show", "get", "plot", "select", "find", "what", "how", "list", "fetch"]
     )
+    if is_memory_only:
+        save_memory_fact("user_preference", "Alias / Preference Rule", question)
+        st.session_state["messages"].append({"role": "user", "content": question})
+        reply = f"Got it! I have stored this rule in **train_db**:\n> *\"{question}\"*\n\nI will apply this mapping to your upcoming queries."
+        st.session_state["messages"].append({"role": "assistant", "content": reply})
+        st.rerun()
+        return
 
-    if any(phrase in clean_q for phrase in memory_triggers):
-        save_memory_fact(
-            category="user_preference",
-            key="Alias / Preference Rule",
-            value=question
-        )
-        st.toast("💾 Saved fact to train_db!")
+    # 3. Autonomous Tool-Calling Agent Execution
+    st.session_state["messages"].append({"role": "user", "content": question})
 
-        # If it's strictly a rule statement (no query requested), reply directly and stop!
-        if is_memory_only_statement:
-            st.session_state["messages"].append({"role": "user", "content": question})
-            reply = f"Got it! I have stored this rule in **train_db**:\n> *\"{question}\"*\n\nI will apply this mapping to your upcoming queries."
-            st.session_state["messages"].append({"role": "assistant", "content": reply})
-            st.rerun()
-            return
+    context = {
+        "reader": st.session_state.get("reader"),
+        "schema_text": st.session_state.get("schema_text", ""),
+        "tables": st.session_state.get("tables", []),
+        "db_name": st.session_state.get("db_name", ""),
+        "history": st.session_state.get("messages", [])
+    }
 
-    # 3. Security & Firewall Interception via Security Agent (MCP) or OPNsense Dry-Run Engine
-    security_keywords = [
-        "port", "firewall", "block", "allow", "security", "vulnerable", "risky",
-        "opnsense", "state", "states", "connection", "connections", "service",
-        "services", "interface", "interfaces", "gateway", "traffic", "rules",
-        "tftp", "modbus", "bacnet", "rdp", "telnet", "ftp"
-    ]
-    is_security_query = any(k in clean_q for k in security_keywords)
+    with st.status("🤖 Autonomous Agent Reasoning & Dynamic Tool Invocation...", expanded=True) as status:
+        status.update(label="🧠 Analyzing query with Qwen 2.5 Coder & selecting tools...", state="running")
+        st.write("• Evaluating intent, device aliases, database schema, and security policies...")
 
-    telemetry_terms = [
-        "voltage", "virv", "viyv", "vibv", "vinv", "current", "viri", "viyi",
-        "vibi", "imbalance", "energy", "temp", "thermal", "select", "reading",
-        "readings", "battery", "vibattery", "hourwise", "phase", "power"
-    ]
-    is_telemetry_query = any(t in clean_q for t in telemetry_terms)
-    is_system_matrix = "[system test matrix]" in clean_q or "telemetry agent:" in clean_q or "security agent" in clean_q
-    
-    sec_ans = ""
-    if is_security_query:
-        with st.status("🛡️ Security Agent inspecting OPNsense firewall...", expanded=True) as status:
-            if MCP_ORCHESTRATOR_AVAILABLE:
-                try:
-                    orchestrator = AgentOrchestrator()
-                    sec_ans = orchestrator.execute_security_inspection(question)
-                    orchestrator.close()
-                    status.update(label="✅ Security Agent Inspection Complete", state="complete", expanded=False)
-                except Exception as e:
-                    if OPNSENSE_AVAILABLE:
-                        sec_ans = opn_engine.handle(question)
-                        status.update(label="✅ OPNsense Inspection Complete (Engine Fallback)", state="complete", expanded=False)
-                    else:
-                        sec_ans = f"Security inspection failed: {e}"
-                        status.update(label="❌ Security Inspection Failed", state="error")
-            elif OPNSENSE_AVAILABLE:
-                sec_ans = opn_engine.handle(question)
-                status.update(label="✅ Security Analysis Complete", state="complete", expanded=False)
-            else:
-                sec_ans = "Security module not found."
-                status.update(label="❌ Security Module Unavailable", state="error")
-
-        if not is_telemetry_query and not is_system_matrix:
-            st.session_state["messages"].append({"role": "user", "content": question})
+        try:
+            llm = get_llm()
+            agent_res = llm.run_agent(
+                question=question,
+                history=st.session_state["messages"],
+                context=context
+            )
+        except Exception as e:
+            status.update(label=f"❌ Agent Error: {e}", state="error")
             st.session_state["messages"].append({
                 "role": "assistant",
-                "content": f"### 🛡️ Security Agent - OPNsense Firewall Inspection\n```text\n{sec_ans}\n```"
+                "content": f"⚠️ An error occurred while executing the autonomous agent: {e}",
+                "question": question
             })
             st.rerun()
             return
+
+        if agent_res.tool_calls:
+            for tc in agent_res.tool_calls:
+                t_name = tc.get("tool", "unknown")
+                t_args = json.dumps(tc.get("arguments", {}))
+                st.write(f"• 🛠️ **Autonomous Tool Call:** `{t_name}` with parameters: `{t_args}`")
+            status.update(
+                label=f"✅ Execution Complete ({len(agent_res.tool_calls)} autonomous tools executed)",
+                state="complete",
+                expanded=False
+            )
         else:
-            st.session_state["matrix_sec_ans"] = sec_ans
+            status.update(label="✅ Direct Synthesis Complete", state="complete", expanded=False)
 
-    # 4. Core Direct Database Pipeline
-    if "reader" not in st.session_state:
-        st.error("Please connect to a database first.")
-        return
+    # Extract any dataframes produced by tools
+    df = agent_res.dataframes[0] if agent_res.dataframes else pd.DataFrame()
+    pretty_sql = agent_res.raw_sql
 
-    st.session_state["messages"].append({"role": "user", "content": question})
+    if pretty_sql:
+        st.session_state["sql_execution_logs"].append({
+            "timestamp": time.strftime("%H:%M:%S"),
+            "sql": pretty_sql,
+            "time_taken": 0.05
+        })
 
-    with st.status("🧠 Processing request...", expanded=True) as status:
-        status.update(label="🔍 Reading persistent memory & database schema...", state="running")
-        st.write("• Checking train_db memories and building schema...")
-        llm = get_llm()
-        
-        train_db_memory = load_all_memories()
-        full_prompt = f"{question}\n\n{BUILDING_MANAGEMENT_MASTER_PROMPT}\n\n{train_db_memory}"
-        
-        raw_sql = llm.generate_sql(
-            full_prompt,
-            st.session_state["schema_text"],
-            history=st.session_state["messages"]
-        )
-        
-        clean_sql = ""
-        pretty_sql = ""
-        df = pd.DataFrame()
-        last_error = ""
-        query_ran = False
+    tool_names = [tc["tool"] for tc in agent_res.tool_calls] if agent_res.tool_calls else []
 
-        raw_sql = _extract_sql(raw_sql)
-
-        if raw_sql and "select" in raw_sql.lower():
-            for attempt in range(2):
-                try:
-                    clean_sql = validate_sql(raw_sql, st.session_state["tables"])
-                    pretty_sql = format_sql(clean_sql)
-
-                    status.update(label="⚡ Executing SQL query on MySQL...", state="running")
-                    st.write("• Fetching database records...")
-
-                    conn = st.session_state["reader"].conn
-                    if not conn.is_connected():
-                        st.session_state["reader"].connect()
-                        conn = st.session_state["reader"].conn
-
-                    cursor = conn.cursor(buffered=True)
-                    start = time.time()
-                    cursor.execute(clean_sql)
-                    rows = cursor.fetchmany(250)
-                    columns = [d[0] for d in cursor.description] if cursor.description else []
-                    cursor.close()
-                    elapsed = time.time() - start
-
-                    st.session_state["sql_execution_logs"].append({
-                        "timestamp": time.strftime("%H:%M:%S"),
-                        "sql": pretty_sql,
-                        "time_taken": elapsed
-                    })
-
-                    df = pd.DataFrame(rows, columns=columns)
-                    query_ran = True
-                    last_error = ""
-                    break
-                except ValidationError as ve:
-                    last_error = f"SQL validation failed: {ve}"
-                except Exception as e:
-                    last_error = f"Execution error: {e}"
-
-                if attempt == 0:
-                    st.write(f"• First attempt failed ({last_error}). Retrying with a corrected query...")
-                    retry_prompt = (
-                        f"{full_prompt}\n\n[PREVIOUS ATTEMPT FAILED]\n"
-                        f"SQL: {raw_sql}\nError: {last_error}\n"
-                        "Write ONE corrected SELECT query using only tables and columns that exist in the schema."
-                    )
-                    raw_sql = _extract_sql(llm.generate_sql(
-                        retry_prompt,
-                        st.session_state["schema_text"],
-                        history=st.session_state["messages"]
-                    ))
-                    if not raw_sql or "select" not in raw_sql.lower():
-                        break
-
-            if last_error:
-                status.update(label="❌ Query could not be completed", state="error")
-                error_msg = f"⚠️ I could not build a working query for this request.\n\n**Reason:** {last_error}\n\nTry rephrasing the question (mention the table, device or time range)."
-                if "matrix_sec_ans" in st.session_state:
-                    error_msg = f"### 🛡️ Security Agent Response\n```text\n{st.session_state['matrix_sec_ans']}\n```\n\n" + error_msg
-                    del st.session_state["matrix_sec_ans"]
-
-                st.session_state["messages"].append({
-                    "role": "assistant",
-                    "content": error_msg,
-                    "sql": pretty_sql or raw_sql,
-                    "question": question
-                })
-                st.rerun()
-                return
-
-        status.update(label="📊 Synthesizing response & domain insights...", state="running")
-        st.write("• Formulating final response...")
-
-        if not pretty_sql:
-            result_preview = "No relational data queried."
-        elif df.empty:
-            result_preview = "The SQL query ran successfully but returned 0 rows (no records matched the filters / date range)."
-        else:
-            result_preview = df.head(15).to_string(index=False)
-        answer = llm.generate_answer(full_prompt, pretty_sql, result_preview)
-
-        if "matrix_sec_ans" in st.session_state:
-            answer = f"### 🛡️ Security Agent Response\n```text\n{st.session_state['matrix_sec_ans']}\n```\n\n" + answer
-            del st.session_state["matrix_sec_ans"]
-
-        status.update(label="✅ Completed successfully!", state="complete", expanded=False)
-
-    st.session_state["messages"].append(
-        {"role": "assistant", "content": answer, "sql": pretty_sql, "df": df if not df.empty else None, "question": question}
-    )
+    st.session_state["messages"].append({
+        "role": "assistant",
+        "content": agent_res.answer,
+        "sql": pretty_sql or None,
+        "df": df if not df.empty else None,
+        "question": question,
+        "tool_calls": tool_names
+    })
     st.rerun()
 
 # -----------------------------------------------------------------------------

@@ -32,10 +32,14 @@ Do not mention SQL syntax. Just answer the question using the data given.
 """
 
 
+from agent_core import BMSAgent, AgentExecutionResult
+
 class LLMEngine:
     def __init__(self, model_name: str = MODEL_NAME, host: str = "http://localhost:11434"):
         self.model_name = model_name
+        self.host = host
         self.client = ollama.Client(host=host)
+        self.agent = BMSAgent(model_name=model_name, host=host)
 
     def load(self) -> LLMEngine:
         """
@@ -46,7 +50,7 @@ class LLMEngine:
             names = [m.get("model", m.get("name", "")) for m in models.get("models", [])]
         except Exception as e:
             raise RuntimeError(
-                "Could not reach Ollama server at http://localhost:11434. "
+                f"Could not reach Ollama server at {self.host}. "
                 "Is Ollama installed and running? Try running: `ollama serve`"
             ) from e
 
@@ -56,7 +60,19 @@ class LLMEngine:
                 f"Run: `ollama pull {self.model_name}` first. "
                 f"Models currently available: {names}"
             )
+        self.agent.load()
         return self
+
+    def run_agent(
+        self,
+        question: str,
+        history: list[dict] | None = None,
+        context: dict | None = None
+    ) -> AgentExecutionResult:
+        """
+        Fast autonomous tool-calling execution entry point.
+        """
+        return self.agent.run(prompt=question, history=history, context=context)
 
     def _chat(self, system_prompt: str, user_prompt: str, max_tokens: int = 400) -> str:
         response = self.client.chat(
