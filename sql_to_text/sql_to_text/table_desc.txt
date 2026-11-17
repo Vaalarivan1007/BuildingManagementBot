@@ -1,0 +1,172 @@
+activealarms: Active alarms where severity is other than CLEAR like CRITICAL:  MAJOR:  MINOR:  WARNING
+advertisementconfigurationdetails: PIKS (Passerger Information Kiosk System) devices' adventertisement configuration details
+advertisementdetails: PIKS (Passerger Information Kiosk System) devices' adventertisement details
+advertisementpikdetails: PIKS (Passerger Information Kiosk System) devices' adventertisement PIK details
+agentdetails: Network Element NEs' agent details like IP and port etc
+alarmdetails: Alarm defenitions
+alarmemailconfig: Alarm Email notification configuration
+alarmgroupdetails: Alarms' groups
+alarmhistory: Alarm history
+alarmlookup: Alarm clearing rule like an alarm clears another alarm
+alarmsmsconfig: Alarm SMS notification configuration
+alarmtypedetails: Alarm definition per NE version
+alarmuserdetails: Alarm user notification configuration
+appsinprofiles: Application profiles details
+auditlogs: Audit logs
+auditmoduleoperations: Operation details used in auditing
+auditmoduletypes: Module details used in auditing
+avlsserverspolldetails: AVLS devices polling log
+buildingalarmconfig: Buildingwise alarm notification configuration
+buildingalarmemailconfig: Buildingwise alarm Email notification configuration
+buildingalarmsmsconfig: Buildingwise alarm SMS notification configuration
+buildingdetails: Building premises details
+buildinglayoutdetails: Building layout files details
+cctvassociation: CCTV device association
+cctvreadings: CCTV readings
+cctvserverreadings: CCTV server readings
+clearedalarms: Cleared alarms where severity is CLEAR
+clearedalarmspurged: Purged cleared alarms
+debugalarms: Alarms which are purposed for debgging
+definedincidentdetails: Incidents as part of FRACAS standard (Failure Reporting Analysis and Corrective Action System)
+definedresolutiondetails: Resoultions for Incidents
+downtimehistory: NEs' downtime history
+dwrmoduleoperations: DWR operation details for legacy way of pushing notification from backend to web GUI
+emailcfg: Email SMTP points
+emailsent: Email transactions history
+emergencycontact: Emergency contact files per Station
+emergencymessages: Emergency messages
+emergencyrequestmessages: Emergency messages for each platform with scheduling details
+eventtypes: Alarm event types as per ITU-T X.733 standard
+exportmoduleoperations: Export operation from GUI details
+feedbackdetails: Feedback forms details
+findingdetails: FRACAS Findings details
+flooralarmconfig: Floor level alarm notification configuration
+flooralarmemailconfig: Floor level alarm Email notification configuration
+flooralarmsmsconfig: Floor level alarm SMS notification configuration
+floordetails: Buildings' Floor details
+floorlayoutdetails: Floor layout files details
+fracasdetails: FRACAS events
+fracasfiledetails: FRACAS files related to events
+fracashistorydetails: FRACAS history
+fracashistoryfiledetails: FRACAS files related to history
+generalhtmldetails: HTML file details probably help or manual pages
+groupalarmconfig: Alarm groups notification configuration
+groupalarmemailconfig: Alarm groups Email notification configuration
+groupalarmsmsconfig: Alarm groups SMS notification configuration
+groupdetails: NEs' group details
+guiapplicationdetails: GUI applications like each view of web gui which can controlled by profiles
+httpproxydetails: HTTP proxy details
+incidentanalysisdetails: Incidents analysis log
+incidentanalysisfiledetails: Incidents analysis files if any
+incidentanalysishistorydetails: Incidents analysis history
+incidentanalysishistoryfiledetails: Incidents analysis history files if any
+incidentdetails: Incidents definitions
+incidenthistorydetails: Incidents history
+incidentprioritydetails: Incidents priorities
+jobdetails: Application backend jobs
+jobdetailsstatus: Application Jobs' status
+jobdetailsstatushistory: Application Jobs' status history
+joboperationdetails: Application Jobs' operations
+locationdetails: Location for FRACAS events
+logindetails: Application login details
+lrvpolldetails: LRV devices' polling
+nealarmconfig: NEs' alarm notification configuration
+nealarmemailconfig: NEs' alarm Email notification configuration
+nealarmsmsconfig: NEs' alarm SMS notification configuration
+neapplicationdetails: NE applications like each view of web gui which can controlled by profiles
+neapplicationmanager: NE application management
+nedetails: Network Element (NE) details
+nelayoutdetails: NEs' layouts
+nelayoutfiledetails: NEs' layouts files
+nelicensedetails: NEs' licenses
+nestatus: NEs' status
+nestatushistory: NEs' status history
+nestatushistorytemp: Temproray table for NEs' status history
+nestatustemp: Temporary table for NEs' status
+nesubtypalarmsmsconfig: NEs' subtypes alarm SMS notification configuration
+nesubtypealarmconfig: NEs' subtypes alarm notification configuration
+nesubtypealarmemailconfig: NEs' subtypes alarm Email notification configuration
+nesubtypedetails: NEs' subtypes
+nesubtypethresholdconfig: NEs' subtypes parameter values threshold configuration in order to raise alarms in case of breaching
+nethresholdconfig: NEs' parameter values threshold configuration in order to raise alarms in case of breaching
+netypedetails: NEs' types
+neversiondetails: NEs' management versions
+northboundtrapsinkdetails: NBIs' end points
+notificationmessagestatus: Notification (which are alarms without severity) messages status
+notificationmessagestatushistory: Notification message history
+notifications: Notification log
+notprocessedincidentdetails: Not processed incidents
+offlinehistoricalalaramdetails: Processed alarm statistics used for reports or offline application module
+offlinehistoricalalaramdetails_tmp: Temporary table
+offlinehistoricalincidentdetails: Processed incident statistics used for reports or offline application module
+offlinehistoricalincidentdetails_tmp: Temporary table
+operatortypes: Application operation types
+perceivedseverity: Alarm severity configuration
+pikconfiguration: PIK device configuration
+pikreadings: PIK device readings
+placeofinterestconfigurationdetails: Near by places to a station to visit - configurations
+placeofinterestdetails: Near by places to a station to visit
+platformalarmconfig: Platform alarm notification configuration
+platformalarmemailconfig: Platform alarm email notification configuration
+platformalarmsmsconfig: Platform alarm SMS notification configuration
+platformdetails: Platform details
+probablecauses: Alarm probablecauses as per ITU-T X.733 standard
+profiledetails: NE and GUI application permission profiles
+riskdetails: Risk definition
+roomalarmconfig: Room alarm notification configuration
+roomalarmemailconfig: Room alarm email notification configuration
+roomalarmsmsconfig: Room alarm SMS notification configuration
+roomdetails: Room details
+sbiconfig: South bound interface end points
+sectiondetails: Section details
+serverproperties: Application server general properties
+signallingpolldetails: Signalligy systems polling
+smresponse: Detail about expected arrival and departure times from SIRI (Service Interface for Real-time Information)
+smscfg: SMS server configuration
+smssent: SMS sent log
+smssentrecipients: SMS recipients 
+smsvendordetails: SMS vendors
+snmpdiskinformationdetails: NEs Disk information retrieved via SNMP
+snmpdiskiodetails: NEs IO information retrieved via SNMP
+snmphardwareconfigdetails: NEs hardware details retrieved via SNMP
+snmpinterfacedetails: NEs interface details retrieved via SNMP
+snmploadaveragedetails: NEs load average details retrieved via SNMP
+snmpmemorydetails: NEs memory details retrieved via SNMP
+snmppolldetails: NEs SNMP polling configuration
+snmppollstatus: NEs SNMP polling status
+snmppollstatushistory: NEs SNMP polling status history
+snmpsystemstatsdetails: NEs system statistics retrieved via SNMP
+specificdetails: NEs Alarm specific details
+specificproblems: Alarm specific problems as per ITU-T X.733 standard
+stationaddress: Station address
+stationalarmconfig: Station alarm notification configuration
+stationalarmemailconfig: Station alarm email notification configuration
+stationalarmsmsconfig: Station alarm SMS notification configuration
+stationdetails: Station details
+stationdistancedetails: Distance between stations
+stationlayoutdetails: Station layout files
+stationorderdetails: Stations display order
+stationparkingcost: Stations parking cost
+stationpdfdetails: Stations' images to display
+subsystemdetails: NEs sub systems
+subsystemlayoutdetails: NEs sub systems layouts
+switch_utilization: Switch type NEs' utilization log
+switch_utilization_tmp: Temporary table
+switchportassociation: Switch ports and NE connectivity details
+threaddetails: Application servers threads
+trainfaredetails: Train fare
+traininformation: Train information
+tspspolldetails: TSPS devices polling log
+updateadvtstatistics: PIKS device advertisements
+updateadvtstatisticsdetails: PIKS device advertisements configuration
+updateusagestatistics: PIKS mobile application usage statistics
+updateusagestatisticsdetails: PIKS mobile application usage statistics configuration
+userackedalarms: Alarm acked by user
+userackedalarmshistory: Alarm acked history
+userdefaultneprivileges: Application User and profile association
+userdetails: Application user details
+userguiprivileges: GUI application users' privileges
+userneprivileges: NE application users' privileges
+weatherdetails: Weather details
+webappdocdetails: Additional documents
+webappgallerydetails: Additional Gallery Images

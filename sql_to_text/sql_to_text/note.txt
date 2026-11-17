@@ -1,0 +1,29 @@
+--------------------------------
+
+mysqldump -u your_user -p --no-data your_database_name > schema.sql
+
+OMCS DB Details
+MySQL Server IP address : 10.20.31.15
+MySQL Server Port : 3306
+MySQL DB Name : OMCSMGMT_2_0_0
+MySQL Login User : omcsuser
+MySQL Login Password : 
+
+mysqldump -h10.20.31.15 -uomcsuser -p --no-data OMCSMGMT_2_0_0 > OMCSMGMT_2_0_0_schema.sql
+mysqldump -h10.20.31.15 -uomcsuser -p --no-data --compact OMCSMGMT_2_0_0 > OMCSMGMT_2_0_0_schema.sql
+
+--------------------------------
+
+# Create and activate a dedicated virtualenv using your Python 3.14.4 installation
+pyenv virtualenv 3.14.4 golden-sql-gen
+pyenv activate golden-sql-gen
+
+# Install only the two lightweight pure-Python packages needed
+pip install --upgrade pip
+pip install openai pymysql
+
+----------------------------------
+
+ollama pull qwen2.5-coder:7b
+
+----------------------------------

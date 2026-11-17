@@ -53,6 +53,13 @@ except ImportError:
     except ImportError:
         OPNSENSE_AVAILABLE = False
 
+# Import OMCS Silver Validation Agent safely (New Feature)
+try:
+    from silver_validation_agent import SilverValidationAgent, OMCSSchemaCatalog, DOMAIN_CLUSTERS
+    SILVER_AGENT_AVAILABLE = True
+except ImportError:
+    SILVER_AGENT_AVAILABLE = False
+
 DB_MEMORY_FILE = "db_history.json"
 BOOKMARKS_FILE = "categorized_bookmarks.json"
 TRAIN_DB_FILE = "train_db.sqlite"
@@ -393,6 +400,16 @@ if "sql_execution_logs" not in st.session_state:
 
 if "pending_query" not in st.session_state:
     st.session_state["pending_query"] = None
+
+if "silver_dataset" not in st.session_state:
+    if os.path.exists("omcs_silver_validation_dataset.json"):
+        try:
+            with open("omcs_silver_validation_dataset.json", "r", encoding="utf-8") as f:
+                st.session_state["silver_dataset"] = json.load(f)
+        except Exception:
+            st.session_state["silver_dataset"] = []
+    else:
+        st.session_state["silver_dataset"] = []
 
 @st.cache_resource(show_spinner="Initializing AI Engine...")
 def get_llm():
@@ -770,7 +787,11 @@ def run_pipeline(question: str):
 # -----------------------------------------------------------------------------
 st.markdown("# ⚡ Building Management AI Master Agent")
 
-tab1, tab2 = st.tabs(["💬 BMS AI Chat & Telemetry", "🛡️ OPNsense Security Engine"])
+tab1, tab2, tab3 = st.tabs([
+    "💬 BMS AI Chat & Telemetry", 
+    "🛡️ OPNsense Security Engine", 
+    "🎯 OMCS Silver Benchmark & Question Generator"
+])
 
 with tab1:
     if "reader" not in st.session_state:
@@ -876,6 +897,130 @@ with tab2:
             if st.button("📋 Full Risk Matrix", use_container_width=True):
                 if OPNSENSE_AVAILABLE:
                     st.code(opn_engine.vulnerable_ports_text(), language="text")
+
+with tab3:
+    st.markdown("### 🎯 Railway OMCS Database (`OMCSMGMT_2_0_0`) — Autonomous Silver Validation Benchmark")
+    st.caption("Autonomous Schema Analysis, Multi-Tier Question & SQL Framing, and Ground-Truth Golden Set Generation for LLM Evaluation.")
+
+    if not SILVER_AGENT_AVAILABLE:
+        st.warning("⚠️ Silver Validation Agent module not found in working directory.")
+    else:
+        catalog = OMCSSchemaCatalog()
+        agent = SilverValidationAgent(catalog)
+        summary = agent.get_domain_summary()
+
+        # Summary KPIs
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("📋 Schema Tables", summary["total_tables"])
+        m2.metric("🏷️ Domain Clusters", len(DOMAIN_CLUSTERS))
+        m3.metric("🎯 Complexity Tiers", len(COMPLEXITY_TIERS))
+        m4.metric("📁 Silver QA Pairs", len(st.session_state.get("silver_dataset", [])))
+
+        # Schema & Domain Architecture Expander
+        with st.expander("🔍 Explore OMCS 173-Table Schema & Domain Architecture", expanded=False):
+            st.markdown("The **OMCSMGMT_2_0_0** database manages operational, maintenance, alarm, and telecommunication infrastructure across railway stations and network elements.")
+            
+            d_cols = st.columns(2)
+            domain_items = list(DOMAIN_CLUSTERS.items())
+            for idx, (dom_name, tbl_list) in enumerate(domain_items):
+                target_col = d_cols[idx % 2]
+                with target_col:
+                    st.markdown(f"**{dom_name}** ({len(tbl_list)} Tables)")
+                    if dom_name == "Safety & Guardrail Boundaries":
+                        st.caption("Adversarial DDL injections (DROP/DELETE), live physical switching commands, non-existent columns.")
+                    else:
+                        tbl_tags = " • ".join([f"`{t}`" for t in tbl_list])
+                        st.caption(tbl_tags)
+
+        # Generator Dashboard
+        st.markdown("#### ⚡ Autonomous Question & Answer Framing Engine")
+        col_ctl1, col_ctl2, col_ctl3 = st.columns([0.45, 0.25, 0.3])
+        
+        with col_ctl1:
+            sel_domain = st.selectbox(
+                "Target Domain Cluster",
+                ["All Domains"] + list(DOMAIN_CLUSTERS.keys()),
+                key="sel_silver_dom"
+            )
+        with col_ctl2:
+            num_q = st.selectbox(
+                "Questions Count",
+                [5, 10, 16, 25],
+                index=2,
+                key="sel_silver_count"
+            )
+        with col_ctl3:
+            gen_mode = st.selectbox(
+                "Engine Mode",
+                ["High-Speed Autonomous Engine", "Dynamic LLM Exploration (Qwen)"],
+                key="sel_silver_mode"
+            )
+
+        if st.button("🚀 Generate Silver Question & Answer Validation Set", type="primary", use_container_width=True):
+            with st.spinner("🧠 Analyzing OMCS schema head-to-toe and framing operational question-answer pairs..."):
+                use_llm = "LLM" in gen_mode
+                dom_target = "All" if sel_domain == "All Domains" else sel_domain
+                records = agent.generate_questions_for_domain(dom_target, count=num_q, use_llm=use_llm)
+                st.session_state["silver_dataset"] = records
+                agent.generated_records = records
+                agent.export_dataset()
+                st.toast(f"✅ Generated {len(records)} Silver Validation QA Pairs!")
+                st.rerun()
+
+        # Display Silver Dataset
+        records = st.session_state.get("silver_dataset", [])
+        if records:
+            st.markdown(f"#### 📋 Current Silver Benchmark Dataset ({len(records)} Question-Answer Pairs)")
+            
+            f1, f2 = st.columns([0.65, 0.35])
+            with f1:
+                search_text = st.text_input("🔍 Search question or SQL query", placeholder="Filter by keyword (e.g. 'alarm', 'nedetails', 'critical')...", key="silver_search").lower()
+            with f2:
+                tier_filter = st.selectbox("Filter Complexity", ["All Tiers", "Simple", "Moderate", "Complex", "Highly Complex", "Guardrail - Safety"], key="tier_filter")
+
+            filtered_records = []
+            for r in records:
+                tier_match = (tier_filter == "All Tiers") or (tier_filter in r.get("complexity_tier", ""))
+                search_match = (
+                    search_text in r.get("question", "").lower() or
+                    search_text in r.get("ground_truth_mysql", "").lower() or
+                    search_text in r.get("domain", "").lower()
+                )
+                if tier_match and (not search_text or search_match):
+                    filtered_records.append(r)
+
+            st.caption(f"Showing **{len(filtered_records)}** of **{len(records)}** records:")
+
+            for rec in filtered_records:
+                tier = rec.get("complexity_tier", "Standard")
+                is_guardrail = "Guardrail" in tier or rec.get("validation_status") == "EXPECTED_REFUSAL"
+                status_badge = "🛑 EXPECTED_REFUSAL" if is_guardrail else "✅ SILVER_VALIDATED"
+                badge_color = "red" if is_guardrail else "green"
+
+                with st.container():
+                    st.markdown(
+                        f"**`[{rec.get('test_id', 'N/A')}]`** | **Domain:** `{rec.get('domain', 'OMCS')}` | **Tier:** `{tier}` | **Persona:** *{rec.get('user_persona', 'Operator')}*"
+                    )
+                    st.markdown(f"##### ❓ Question:\n> **{rec.get('question')}**")
+                    
+                    with st.expander("🛠️ Ground-Truth MySQL 8.0 Query", expanded=not is_guardrail):
+                        st.code(rec.get("ground_truth_mysql", ""), language="sql" if not is_guardrail else "text")
+
+                    st.markdown(f"##### 💡 Expected Model Answer & Operational Insight:\n{rec.get('expected_answer')}")
+                    st.markdown(f":{badge_color}[**Status:** {status_badge}]")
+                    st.divider()
+
+            # Export dataset buttons
+            c_exp1, c_exp2 = st.columns(2)
+            with c_exp1:
+                json_bytes = json.dumps(records, indent=2, ensure_ascii=False).encode("utf-8")
+                st.download_button("📥 Download Silver Benchmark (.json)", json_bytes, "omcs_silver_validation_dataset.json", "application/json", use_container_width=True)
+            with c_exp2:
+                df_export = pd.DataFrame(records)
+                csv_bytes = df_export.to_csv(index=False).encode("utf-8")
+                st.download_button("📥 Download Silver Benchmark (.csv)", csv_bytes, "omcs_silver_validation_dataset.csv", "text/csv", use_container_width=True)
+        else:
+            st.info("💡 Click **'🚀 Generate Silver Question & Answer Validation Set'** above to autonomously frame operational questions from the OMCS schema.")
 
 # -----------------------------------------------------------------------------
 # 11. MIC BUTTON & INPUT HANDLING
