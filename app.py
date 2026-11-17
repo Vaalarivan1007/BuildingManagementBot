@@ -725,10 +725,7 @@ def run_pipeline(question: str):
         "history": st.session_state.get("messages", [])
     }
 
-    with st.status("🤖 Autonomous Agent Reasoning & Dynamic Tool Invocation...", expanded=True) as status:
-        status.update(label="🧠 Analyzing query with Qwen 2.5 Coder & selecting tools...", state="running")
-        st.write("• Evaluating intent, device aliases, database schema, and security policies...")
-
+    with st.spinner("🤖 Analyzing building telemetry and evaluating security policies..."):
         try:
             llm = get_llm()
             agent_res = llm.run_agent(
@@ -737,7 +734,6 @@ def run_pipeline(question: str):
                 context=context
             )
         except Exception as e:
-            status.update(label=f"❌ Agent Error: {e}", state="error")
             st.session_state["messages"].append({
                 "role": "assistant",
                 "content": f"⚠️ An error occurred while executing the autonomous agent: {e}",
@@ -745,19 +741,6 @@ def run_pipeline(question: str):
             })
             st.rerun()
             return
-
-        if agent_res.tool_calls:
-            for tc in agent_res.tool_calls:
-                t_name = tc.get("tool", "unknown")
-                t_args = json.dumps(tc.get("arguments", {}))
-                st.write(f"• 🛠️ **Autonomous Tool Call:** `{t_name}` with parameters: `{t_args}`")
-            status.update(
-                label=f"✅ Execution Complete ({len(agent_res.tool_calls)} autonomous tools executed)",
-                state="complete",
-                expanded=False
-            )
-        else:
-            status.update(label="✅ Direct Synthesis Complete", state="complete", expanded=False)
 
     # Extract any dataframes produced by tools
     df = agent_res.dataframes[0] if agent_res.dataframes else pd.DataFrame()
