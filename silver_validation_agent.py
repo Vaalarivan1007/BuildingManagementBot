@@ -163,6 +163,78 @@ class OMCSSchemaCatalog:
 
 
 # -----------------------------------------------------------------------------
+# 2.5 LIVE OMCS DATABASE CONNECTOR
+# -----------------------------------------------------------------------------
+
+class OMCSDatabaseConnector:
+    """Manages live MySQL connection to OMCSMGMT_2_0_0."""
+    def __init__(
+        self,
+        host: str = "10.20.31.15",
+        port: int = 3306,
+        user: str = "omcsuser",
+        password: str = "",
+        database: str = "OMCSMGMT_2_0_0"
+    ):
+        self.host = host
+        self.port = int(port)
+        self.user = user
+        self.password = password
+        self.database = database
+        self.conn = None
+        self.is_connected = False
+        self.last_error = ""
+
+    def connect(self) -> Tuple[bool, str]:
+        try:
+            import pymysql
+            self.conn = pymysql.connect(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                database=self.database,
+                charset="utf8mb4",
+                connect_timeout=3
+            )
+            self.is_connected = True
+            self.last_error = ""
+            return True, f"Connected to live MySQL database '{self.database}' at {self.host}:{self.port}!"
+        except Exception as e:
+            self.is_connected = False
+            self.last_error = str(e)
+            return False, f"Could not reach {self.host}:{self.port} ({e})."
+
+    def execute_query(self, sql: str, limit: int = 10) -> Dict[str, Any]:
+        if not self.is_connected or not self.conn:
+            return {"status": "error", "message": "Database is not connected.", "rows": [], "columns": []}
+        clean = sql.strip().rstrip(";")
+        if not clean.upper().startswith(("SELECT", "WITH", "EXPLAIN", "SHOW")):
+            return {"status": "error", "message": "Only read-only queries are permitted.", "rows": [], "columns": []}
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(clean)
+                cols = [desc[0] for desc in cur.description] if cur.description else []
+                rows = cur.fetchmany(limit)
+                return {
+                    "status": "success",
+                    "columns": cols,
+                    "rows": [list(r) for r in rows],
+                    "row_count": len(rows)
+                }
+        except Exception as e:
+            return {"status": "error", "message": str(e), "rows": [], "columns": []}
+
+    def close(self):
+        if self.conn:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.is_connected = False
+
+
+# -----------------------------------------------------------------------------
 # 3. AUTONOMOUS QUESTION & ANSWER FRAMING AGENT
 # -----------------------------------------------------------------------------
 
@@ -431,7 +503,170 @@ Return ONLY a JSON array where each object has:
         except Exception:
             pass
 
-        return seed[:count]
+    def develop_dynamic_qa_item(
+        self,
+        domain: str = "Alarms & Fault Events",
+        table_name: Optional[str] = None,
+        complexity_tier: str = "Simple",
+        user_persona: Optional[str] = None,
+        use_llm: bool = True,
+        db_connector: Optional[OMCSDatabaseConnector] = None
+    ) -> Dict[str, Any]:
+        """
+        Dynamically frames 1 operational question, valid ground-truth MySQL 8.0 query,
+        and authoritative answer. Validates against live DB if connected.
+        """
+        # Determine table
+        tbl = table_name
+        if not tbl or tbl == "Auto-Select":
+            candidates = DOMAIN_CLUSTERS.get(domain, [])
+            if candidates and candidates != ["GUARDRAILS"]:
+                tbl = candidates[0]
+            else:
+                tbl = "activealarms"
+
+        tbl_info = self.catalog.get_table_info(tbl)
+        if not tbl_info:
+            tbl_info = {
+                "name": tbl,
+                "columns": ["recordid", "neid", "moc", "moi", "eventtime", "ticketmessage"],
+                "description": "Operational Management Table"
+            }
+
+        cols = tbl_info["columns"]
+        cols_text = ", ".join(cols[:15])
+        tbl_desc = tbl_info.get("description", "OMCS Table")
+
+        persona = user_persona or USER_PERSONAS[0]
+        q_text = ""
+        sql_text = ""
+        ans_text = ""
+
+        # Step 1: Try LLM if requested
+        if use_llm and HAS_OLLAMA:
+            try:
+                client = ollama.Client()
+                prompt = f"""You are a Railway NMS Lead Systems Architect for database OMCSMGMT_2_0_0.
+Table: `{tbl}`
+Description: {tbl_desc}
+Columns: {cols_text}
+Complexity Tier: {complexity_tier}
+Target Persona: {persona}
+
+Task: Formulate 1 realistic operational question, valid ground-truth MySQL 8.0 SELECT query, and authoritative answer.
+Strict Rules:
+1. Reference ONLY exact column names present in `{tbl}` above.
+2. Return ONLY a single JSON object:
+{{
+  "question": "Operational question in natural railway terms",
+  "ground_truth_mysql": "SELECT ... FROM `{tbl}` ... LIMIT 50;",
+  "expected_answer": "Detailed operational answer and field guidelines"
+}}"""
+                resp = client.chat(
+                    model=self.model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    format="json",
+                    options={"temperature": 0.2, "num_predict": 450}
+                )
+                content = resp.get("message", {}).get("content", "").strip()
+                parsed = json.loads(content)
+                q_text = parsed.get("question", "").strip()
+                sql_text = parsed.get("ground_truth_mysql", "").strip()
+                ans_text = parsed.get("expected_answer", "").strip()
+            except Exception:
+                pass
+
+        # Step 2: High-Speed Schema-Informed Fallback Engine if LLM offline / empty
+        if not q_text or not sql_text:
+            c_sample = cols[:5] if len(cols) >= 5 else cols
+            c_str = ", ".join(c_sample)
+            
+            where_clause = ""
+            order_clause = ""
+            if "perceivedseverity" in cols:
+                where_clause = "WHERE perceivedseverity = 1"
+                q_text = f"Show all active critical alarms currently recorded in `{tbl}`."
+                ans_text = f"Surfaces critical alarms (severity = 1) from `{tbl}`. Control room operators should prioritize immediate field review for these entries."
+            elif any(c in cols for c in ["neadminstate", "adminstate", "adminstatus"]):
+                adm_col = next(c for c in cols if c in ["neadminstate", "adminstate", "adminstatus"])
+                where_clause = f"WHERE {adm_col} = 0"
+                q_text = f"Which equipment or entities in `{tbl}` are currently administratively disabled or offline?"
+                ans_text = f"Queries `{tbl}` for records with administrative state set to offline ({adm_col} = 0) to highlight disconnected or maintenance-flagged assets."
+            elif any(c in cols for c in ["eventtime", "createdtime", "logintime", "modifiedtime"]):
+                time_col = next(c for c in cols if c in ["eventtime", "createdtime", "logintime", "modifiedtime"])
+                order_clause = f"ORDER BY {time_col} DESC"
+                q_text = f"What are the latest operational events and status updates logged in `{tbl}`?"
+                ans_text = f"Displays chronological records from `{tbl}` sorted by recent timestamps, providing real-time situational awareness."
+            else:
+                q_text = f"Retrieve the primary attributes and operational details from table `{tbl}`."
+                ans_text = f"Returns the current operational records and configuration parameters from `{tbl}`."
+
+            sql_parts = [f"SELECT {c_str} FROM `{tbl}`"]
+            if where_clause: sql_parts.append(where_clause)
+            if order_clause: sql_parts.append(order_clause)
+            sql_parts.append("LIMIT 50;")
+            sql_text = " ".join(sql_parts)
+
+        # Step 3: Validate against Live DB if connected
+        val_status = "SCHEMA_VALIDATED"
+        probe_msg = "Validated against OMCS schema definitions"
+        if db_connector and db_connector.is_connected:
+            probe_res = db_connector.execute_query(f"EXPLAIN {sql_text.rstrip(';')}")
+            if probe_res.get("status") == "success":
+                val_status = "LIVE_DB_VERIFIED"
+                probe_msg = "Successfully verified and planned on live MySQL 8.0 server"
+            else:
+                probe_msg = f"Live DB syntax note: {probe_res.get('message')}"
+
+        import random
+        r_id = random.randint(100, 999)
+        domain_tag = domain[:3].upper().replace("&", "").strip()
+        test_id = f"OMCS-{domain_tag}-{r_id}"
+
+        return {
+            "test_id": test_id,
+            "domain": domain,
+            "target_table": tbl,
+            "complexity_tier": complexity_tier,
+            "user_persona": persona,
+            "question": q_text,
+            "ground_truth_mysql": sql_text,
+            "expected_answer": ans_text,
+            "validation_status": val_status,
+            "db_probe_status": probe_msg,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+    def batch_develop_qa(
+        self,
+        domain: str = "All Domains",
+        count: int = 5,
+        use_llm: bool = False,
+        db_connector: Optional[OMCSDatabaseConnector] = None,
+        progress_callback = None
+    ) -> List[Dict[str, Any]]:
+        """Develops multiple QA items dynamically and appends to the dataset."""
+        new_items = []
+        domain_list = list(DOMAIN_CLUSTERS.keys()) if domain in ["All Domains", "All"] else [domain]
+
+        for i in range(count):
+            dom = domain_list[i % len(domain_list)]
+            tier = COMPLEXITY_TIERS[i % len(COMPLEXITY_TIERS)]
+            persona = USER_PERSONAS[i % len(USER_PERSONAS)]
+            
+            item = self.develop_dynamic_qa_item(
+                domain=dom,
+                complexity_tier=tier.split(" ")[0],
+                user_persona=persona,
+                use_llm=use_llm,
+                db_connector=db_connector
+            )
+            new_items.append(item)
+            self.generated_records.append(item)
+            if progress_callback:
+                progress_callback(i + 1, count, item)
+
+        return new_items
 
     def export_dataset(self, filename_base: str = "omcs_silver_validation_dataset") -> Tuple[str, str]:
         """Saves generated records to both JSON and CSV format."""

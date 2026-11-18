@@ -58,6 +58,7 @@ try:
     from silver_validation_agent import (
         SilverValidationAgent,
         OMCSSchemaCatalog,
+        OMCSDatabaseConnector,
         DOMAIN_CLUSTERS,
         COMPLEXITY_TIERS,
         USER_PERSONAS
@@ -68,6 +69,7 @@ except ImportError:
     DOMAIN_CLUSTERS = {}
     COMPLEXITY_TIERS = []
     USER_PERSONAS = []
+    OMCSDatabaseConnector = None
 
 DB_MEMORY_FILE = "db_history.json"
 BOOKMARKS_FILE = "categorized_bookmarks.json"
@@ -419,6 +421,12 @@ if "silver_dataset" not in st.session_state:
             st.session_state["silver_dataset"] = []
     else:
         st.session_state["silver_dataset"] = []
+
+if "omcs_connector" not in st.session_state:
+    st.session_state["omcs_connector"] = None
+
+if "last_developed_qa" not in st.session_state:
+    st.session_state["last_developed_qa"] = None
 
 @st.cache_resource(show_spinner="Initializing AI Engine...")
 def get_llm():
@@ -908,8 +916,8 @@ with tab2:
                     st.code(opn_engine.vulnerable_ports_text(), language="text")
 
 with tab3:
-    st.markdown("### 🎯 Railway OMCS Database (`OMCSMGMT_2_0_0`) — Autonomous Silver Validation Benchmark")
-    st.caption("Autonomous Schema Analysis, Multi-Tier Question & SQL Framing, and Ground-Truth Golden Set Generation for LLM Evaluation.")
+    st.markdown("### 🎯 Railway OMCS Database (`OMCSMGMT_2_0_0`) — Dynamic Question & Answer Development Studio")
+    st.caption("Connect to the database, dynamically develop operational questions, generate ground-truth SQL, synthesize expert answers, and prepare the Silver validation set.")
 
     if not SILVER_AGENT_AVAILABLE:
         st.warning("⚠️ Silver Validation Agent module not found in working directory.")
@@ -917,119 +925,254 @@ with tab3:
         catalog = OMCSSchemaCatalog()
         agent = SilverValidationAgent(catalog)
         summary = agent.get_domain_summary()
+        connector: Optional[OMCSDatabaseConnector] = st.session_state.get("omcs_connector")
+        is_live_connected = connector.is_connected if connector else False
 
-        # Summary KPIs
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("📋 Schema Tables", summary["total_tables"])
-        m2.metric("🏷️ Domain Clusters", len(DOMAIN_CLUSTERS))
-        m3.metric("🎯 Complexity Tiers", len(COMPLEXITY_TIERS))
-        m4.metric("📁 Silver QA Pairs", len(st.session_state.get("silver_dataset", [])))
+        # ---------------------------------------------------------------------
+        # 1. DATABASE CONNECTION BAR
+        # ---------------------------------------------------------------------
+        col_stat1, col_stat2 = st.columns([0.7, 0.3])
+        with col_stat1:
+            if is_live_connected:
+                st.success(f"🟢 **Live Database Connected**: `{connector.database}` on `{connector.host}:{connector.port}` (User: `{connector.user}`)")
+            else:
+                st.info("🟡 **Database Mode**: **Offline Schema Intelligence** (`OMCSMGMT_2_0_0_schema.sql` — 173 Tables Active). Connect below for live query probing.")
+        with col_stat2:
+            st.metric("📋 Schema Tables", summary["total_tables"], f"{'Live Probing' if is_live_connected else 'Offline DDL'}")
 
-        # Schema & Domain Architecture Expander
-        with st.expander("🔍 Explore OMCS 173-Table Schema & Domain Architecture", expanded=False):
-            st.markdown("The **OMCSMGMT_2_0_0** database manages operational, maintenance, alarm, and telecommunication infrastructure across railway stations and network elements.")
-            
-            d_cols = st.columns(2)
-            domain_items = list(DOMAIN_CLUSTERS.items())
-            for idx, (dom_name, tbl_list) in enumerate(domain_items):
-                target_col = d_cols[idx % 2]
-                with target_col:
-                    st.markdown(f"**{dom_name}** ({len(tbl_list)} Tables)")
-                    if dom_name == "Safety & Guardrail Boundaries":
-                        st.caption("Adversarial DDL injections (DROP/DELETE), live physical switching commands, non-existent columns.")
-                    else:
-                        tbl_tags = " • ".join([f"`{t}`" for t in tbl_list])
-                        st.caption(tbl_tags)
+        with st.expander("🔌 Database Connection Settings & Credentials", expanded=not is_live_connected):
+            col_c1, col_c2, col_c3 = st.columns(3)
+            with col_c1:
+                db_host = st.text_input("Server Host / IP", value="10.20.31.15", key="omcs_host_inp")
+                db_port = st.number_input("Port", value=3306, step=1, key="omcs_port_inp")
+            with col_c2:
+                db_name = st.text_input("Database Name", value="OMCSMGMT_2_0_0", key="omcs_name_inp")
+                db_user = st.text_input("User", value="omcsuser", key="omcs_user_inp")
+            with col_c3:
+                db_pass = st.text_input("Password", value="", type="password", key="omcs_pass_inp")
+                st.caption("Default OMCS credentials pre-filled from `note.txt`.")
 
-        # Generator Dashboard
-        st.markdown("#### ⚡ Autonomous Question & Answer Framing Engine")
-        col_ctl1, col_ctl2, col_ctl3 = st.columns([0.45, 0.25, 0.3])
-        
-        with col_ctl1:
-            sel_domain = st.selectbox(
-                "Target Domain Cluster",
-                ["All Domains"] + list(DOMAIN_CLUSTERS.keys()),
-                key="sel_silver_dom"
+            col_act1, col_act2 = st.columns(2)
+            with col_act1:
+                if st.button("🔌 Connect to Live Database", type="primary", use_container_width=True):
+                    with st.spinner("Connecting to OMCS MySQL server..."):
+                        new_conn = OMCSDatabaseConnector(
+                            host=db_host,
+                            port=int(db_port),
+                            user=db_user,
+                            password=db_pass,
+                            database=db_name
+                        )
+                        success, msg = new_conn.connect()
+                        if success:
+                            st.session_state["omcs_connector"] = new_conn
+                            st.toast("✅ Connected to live OMCS database!")
+                            st.rerun()
+                        else:
+                            st.warning(f"⚠️ {msg} Switched to Offline Schema Engine.")
+            with col_act2:
+                if st.button("🔄 Disconnect / Use Offline Schema Engine", use_container_width=True):
+                    if connector:
+                        connector.close()
+                    st.session_state["omcs_connector"] = None
+                    st.toast("Using Offline Schema Engine.")
+                    st.rerun()
+
+        st.divider()
+
+        # ---------------------------------------------------------------------
+        # 2. DYNAMIC QUESTION & ANSWER DEVELOPMENT WORKBENCH
+        # ---------------------------------------------------------------------
+        st.markdown("#### ⚡ Dynamic Question & Answer Development Studio")
+        st.caption("Select your domain and target table. When you click **'Develop Question & Answer'**, the agent will analyze the table schema head-to-toe, frame the question, generate ground-truth SQL, synthesize the answer, and add it to the set.")
+
+        col_w1, col_w2 = st.columns([0.45, 0.55])
+
+        with col_w1:
+            st.markdown("##### ⚙️ Generation Parameters")
+            domain_choices = list(DOMAIN_CLUSTERS.keys())
+            sel_dom = st.selectbox("1. Target Domain", domain_choices, index=0, key="dyn_sel_dom")
+
+            # Dynamically populate table choices based on domain
+            domain_tbls = DOMAIN_CLUSTERS.get(sel_dom, [])
+            valid_tbls = ["Auto-Select"] + [t for t in domain_tbls if t != "GUARDRAILS"]
+            sel_tbl = st.selectbox("2. Target Table", valid_tbls, index=0, key="dyn_sel_tbl")
+
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                sel_tier = st.selectbox("3. Complexity Tier", ["Simple", "Moderate", "Complex", "Highly Complex", "Guardrail - Safety"], key="dyn_sel_tier")
+            with col_p2:
+                sel_persona = st.selectbox("4. User Persona", USER_PERSONAS, key="dyn_sel_persona")
+
+            sel_engine = st.radio(
+                "5. Generation Engine",
+                ["⚡ High-Speed Engine (Instant, ~0.1s)", "🧠 Deep Neural Agent (Qwen 2.5 Coder, ~25s)"],
+                index=0,
+                key="dyn_sel_engine"
             )
-        with col_ctl2:
-            num_q = st.selectbox(
-                "Questions Count",
-                [5, 10, 16, 25],
-                index=2,
-                key="sel_silver_count"
-            )
-        with col_ctl3:
-            gen_mode = st.selectbox(
-                "Engine Mode",
-                ["High-Speed Autonomous Engine", "Dynamic LLM Exploration (Qwen)"],
-                key="sel_silver_mode"
-            )
 
-        if st.button("🚀 Generate Silver Question & Answer Validation Set", type="primary", use_container_width=True):
-            with st.spinner("🧠 Analyzing OMCS schema head-to-toe and framing operational question-answer pairs..."):
-                use_llm = "LLM" in gen_mode
-                dom_target = "All" if sel_domain == "All Domains" else sel_domain
-                records = agent.generate_questions_for_domain(dom_target, count=num_q, use_llm=use_llm)
-                st.session_state["silver_dataset"] = records
-                agent.generated_records = records
-                agent.export_dataset()
-                st.toast(f"✅ Generated {len(records)} Silver Validation QA Pairs!")
+            if st.button("⚡ Develop Question & Answer Pair", type="primary", use_container_width=True):
+                with st.status("🤖 Dynamically developing question and answer...", expanded=True) as status:
+                    status.update(label=f"🔍 Introspecting schema and columns for domain: {sel_dom}...", state="running")
+                    time.sleep(0.15)
+                    status.update(label=f"✍️ Formulating natural language question for {sel_persona.split('(')[0].strip()}...", state="running")
+                    time.sleep(0.15)
+                    status.update(label="⚙️ Generating & Validating Ground-Truth MySQL 8.0 Query...", state="running")
+
+                    use_llm = "Neural" in sel_engine
+                    target_t = None if sel_tbl == "Auto-Select" else sel_tbl
+                    item = agent.develop_dynamic_qa_item(
+                        domain=sel_dom,
+                        table_name=target_t,
+                        complexity_tier=sel_tier,
+                        user_persona=sel_persona,
+                        use_llm=use_llm,
+                        db_connector=connector
+                    )
+
+                    status.update(label="💡 Synthesizing expert operational answer...", state="running")
+                    time.sleep(0.15)
+                    status.update(label="✅ Development Complete!", state="complete", expanded=False)
+
+                st.session_state["last_developed_qa"] = item
+                # Append to set if not already present
+                cur_set = st.session_state.get("silver_dataset", [])
+                if not any(x.get("test_id") == item["test_id"] for x in cur_set):
+                    cur_set.insert(0, item)
+                    st.session_state["silver_dataset"] = cur_set
+                    agent.generated_records = cur_set
+                    agent.export_dataset()
+                st.toast(f"✅ Developed QA item: {item['test_id']}!")
                 st.rerun()
 
-        # Display Silver Dataset
-        records = st.session_state.get("silver_dataset", [])
-        if records:
-            st.markdown(f"#### 📋 Current Silver Benchmark Dataset ({len(records)} Question-Answer Pairs)")
-            
-            f1, f2 = st.columns([0.65, 0.35])
-            with f1:
-                search_text = st.text_input("🔍 Search question or SQL query", placeholder="Filter by keyword (e.g. 'alarm', 'nedetails', 'critical')...", key="silver_search").lower()
-            with f2:
-                tier_filter = st.selectbox("Filter Complexity", ["All Tiers", "Simple", "Moderate", "Complex", "Highly Complex", "Guardrail - Safety"], key="tier_filter")
-
-            filtered_records = []
-            for r in records:
-                tier_match = (tier_filter == "All Tiers") or (tier_filter in r.get("complexity_tier", ""))
-                search_match = (
-                    search_text in r.get("question", "").lower() or
-                    search_text in r.get("ground_truth_mysql", "").lower() or
-                    search_text in r.get("domain", "").lower()
-                )
-                if tier_match and (not search_text or search_match):
-                    filtered_records.append(r)
-
-            st.caption(f"Showing **{len(filtered_records)}** of **{len(records)}** records:")
-
-            for rec in filtered_records:
-                tier = rec.get("complexity_tier", "Standard")
-                is_guardrail = "Guardrail" in tier or rec.get("validation_status") == "EXPECTED_REFUSAL"
-                status_badge = "🛑 EXPECTED_REFUSAL" if is_guardrail else "✅ SILVER_VALIDATED"
-                badge_color = "red" if is_guardrail else "green"
-
-                with st.container():
-                    st.markdown(
-                        f"**`[{rec.get('test_id', 'N/A')}]`** | **Domain:** `{rec.get('domain', 'OMCS')}` | **Tier:** `{tier}` | **Persona:** *{rec.get('user_persona', 'Operator')}*"
-                    )
-                    st.markdown(f"##### ❓ Question:\n> **{rec.get('question')}**")
+            # Batch Generator
+            with st.expander("🚀 Batch Develop Multiple QA Pairs", expanded=False):
+                batch_count = st.slider("Number of pairs to develop", min_value=2, max_value=16, value=5, key="batch_cnt_slider")
+                if st.button("🚀 Run Batch Development", use_container_width=True):
+                    prog_bar = st.progress(0, text="Starting batch generation...")
+                    cur_set = st.session_state.get("silver_dataset", [])
+                    def on_prog(current, total, item):
+                        prog_bar.progress(current / total, text=f"Developing ({current}/{total}): {item.get('test_id')} for {item.get('domain')}...")
                     
-                    with st.expander("🛠️ Ground-Truth MySQL 8.0 Query", expanded=not is_guardrail):
-                        st.code(rec.get("ground_truth_mysql", ""), language="sql" if not is_guardrail else "text")
+                    new_items = agent.batch_develop_qa(
+                        domain=sel_dom,
+                        count=batch_count,
+                        use_llm=("Neural" in sel_engine),
+                        db_connector=connector,
+                        progress_callback=on_prog
+                    )
+                    st.session_state["silver_dataset"] = new_items + cur_set
+                    agent.generated_records = st.session_state["silver_dataset"]
+                    agent.export_dataset()
+                    st.toast(f"✅ Added {len(new_items)} QA items to the set!")
+                    st.rerun()
 
-                    st.markdown(f"##### 💡 Expected Model Answer & Operational Insight:\n{rec.get('expected_answer')}")
-                    st.markdown(f":{badge_color}[**Status:** {status_badge}]")
-                    st.divider()
+        with col_w2:
+            st.markdown("##### ✨ Freshly Developed Question & Answer")
+            last_qa = st.session_state.get("last_developed_qa")
+            if last_qa:
+                with st.container():
+                    st.markdown(f"**`[{last_qa.get('test_id')}]`** | **Domain:** `{last_qa.get('domain')}` | **Tier:** `{last_qa.get('complexity_tier')}` | **Table:** `{last_qa.get('target_table')}`")
+                    st.markdown(f"##### ❓ Question:\n> **{last_qa.get('question')}**")
+                    st.markdown(f"👤 *Target Persona:* **{last_qa.get('user_persona')}**")
 
-            # Export dataset buttons
-            c_exp1, c_exp2 = st.columns(2)
-            with c_exp1:
-                json_bytes = json.dumps(records, indent=2, ensure_ascii=False).encode("utf-8")
-                st.download_button("📥 Download Silver Benchmark (.json)", json_bytes, "omcs_silver_validation_dataset.json", "application/json", use_container_width=True)
-            with c_exp2:
-                df_export = pd.DataFrame(records)
+                    st.markdown("##### 🛠️ Ground-Truth MySQL 8.0 Query:")
+                    st.code(last_qa.get("ground_truth_mysql"), language="sql")
+
+                    st.markdown(f"##### 💡 Expected Model Answer & Operational Insight:\n{last_qa.get('expected_answer')}")
+
+                    val_stat = last_qa.get("validation_status", "VALIDATED")
+                    pill_color = "green" if "LIVE" in val_stat else "blue"
+                    st.markdown(f":{pill_color}[**Validation Status:** `{val_stat}` ({last_qa.get('db_probe_status', '')})]")
+
+                    # Live Query Tester on Database
+                    col_t1, col_t2 = st.columns(2)
+                    with col_t1:
+                        if st.button("▶️ Test Query on Database", key="test_sql_btn", use_container_width=True):
+                            sql_to_run = last_qa.get("ground_truth_mysql")
+                            if connector and connector.is_connected:
+                                q_res = connector.execute_query(sql_to_run, limit=5)
+                                if q_res.get("status") == "success":
+                                    st.success(f"Query returned {q_res.get('row_count')} live rows:")
+                                    df_res = pd.DataFrame(q_res.get("rows", []), columns=q_res.get("columns", []))
+                                    st.dataframe(df_res, use_container_width=True)
+                                else:
+                                    st.error(f"SQL Execution Error: {q_res.get('message')}")
+                            else:
+                                st.info("ℹ️ Connect to live database above to run this query against live records. (Currently running in validated Offline Schema Mode).")
+            else:
+                st.info("👈 Select your parameters on the left and click **'⚡ Develop Question & Answer Pair'** to watch the agent analyze the schema and formulate the question and answer live.")
+
+        st.divider()
+
+        # ---------------------------------------------------------------------
+        # 3. PREPARED SILVER VALIDATION DATASET
+        # ---------------------------------------------------------------------
+        dataset = st.session_state.get("silver_dataset", [])
+        st.markdown(f"#### 📋 Prepared Silver Validation Set ({len(dataset)} Question-Answer Pairs)")
+        st.caption("This set serves as the ground-truth benchmark to validate your model's text-to-SQL accuracy and domain reasoning.")
+
+        if dataset:
+            col_f1, col_f2, col_f3 = st.columns([0.45, 0.35, 0.2])
+            with col_f1:
+                search_q = st.text_input("🔍 Search prepared set", placeholder="Search by question, SQL, or table...", key="prep_search").lower()
+            with col_f2:
+                filter_dom = st.selectbox("Filter Domain", ["All Domains"] + list(DOMAIN_CLUSTERS.keys()), key="prep_filter_dom")
+            with col_f3:
+                filter_tier = st.selectbox("Filter Tier", ["All Tiers", "Simple", "Moderate", "Complex", "Highly Complex", "Guardrail"], key="prep_filter_tier")
+
+            filtered = []
+            for r in dataset:
+                d_match = (filter_dom == "All Domains") or (r.get("domain") == filter_dom)
+                t_match = (filter_tier == "All Tiers") or (filter_tier in r.get("complexity_tier", ""))
+                s_match = (
+                    not search_q or
+                    search_q in r.get("question", "").lower() or
+                    search_q in r.get("ground_truth_mysql", "").lower() or
+                    search_q in r.get("target_table", "").lower() or
+                    search_q in r.get("test_id", "").lower()
+                )
+                if d_match and t_match and s_match:
+                    filtered.append(r)
+
+            st.caption(f"Displaying **{len(filtered)}** of **{len(dataset)}** QA pairs:")
+
+            for idx, r in enumerate(filtered):
+                with st.expander(f"`[{r.get('test_id')}]` {r.get('question')} ({r.get('complexity_tier', 'Simple')})", expanded=False):
+                    st.markdown(f"**Domain:** `{r.get('domain')}` | **Target Table:** `{r.get('target_table', 'activealarms')}` | **Persona:** *{r.get('user_persona')}*")
+                    st.markdown(f"**Question:**\n> {r.get('question')}")
+                    st.markdown("**Ground-Truth MySQL 8.0 Query:**")
+                    st.code(r.get("ground_truth_mysql"), language="sql")
+                    st.markdown(f"**Expected Model Answer & Guidance:**\n{r.get('expected_answer')}")
+                    st.caption(f"Status: **{r.get('validation_status', 'VALIDATED')}** | Created: {r.get('created_at', 'N/A')}")
+                    
+                    if st.button("🗑️ Remove from Set", key=f"del_qa_{r.get('test_id')}_{idx}"):
+                        dataset = [x for x in dataset if x.get("test_id") != r.get("test_id")]
+                        st.session_state["silver_dataset"] = dataset
+                        agent.generated_records = dataset
+                        agent.export_dataset()
+                        st.toast(f"Removed {r.get('test_id')}")
+                        st.rerun()
+
+            # Export toolbar
+            col_exp1, col_exp2, col_exp3 = st.columns([0.4, 0.4, 0.2])
+            with col_exp1:
+                json_bytes = json.dumps(dataset, indent=2, ensure_ascii=False).encode("utf-8")
+                st.download_button("📥 Download Prepared Set (.json)", json_bytes, "omcs_silver_validation_dataset.json", "application/json", use_container_width=True)
+            with col_exp2:
+                df_export = pd.DataFrame(dataset)
                 csv_bytes = df_export.to_csv(index=False).encode("utf-8")
-                st.download_button("📥 Download Silver Benchmark (.csv)", csv_bytes, "omcs_silver_validation_dataset.csv", "text/csv", use_container_width=True)
+                st.download_button("📥 Download Prepared Set (.csv)", csv_bytes, "omcs_silver_validation_dataset.csv", "text/csv", use_container_width=True)
+            with col_exp3:
+                if st.button("🗑️ Reset Set", use_container_width=True):
+                    st.session_state["silver_dataset"] = []
+                    st.session_state["last_developed_qa"] = None
+                    agent.generated_records = []
+                    agent.export_dataset()
+                    st.toast("Silver set cleared.")
+                    st.rerun()
         else:
-            st.info("💡 Click **'🚀 Generate Silver Question & Answer Validation Set'** above to autonomously frame operational questions from the OMCS schema.")
+            st.info("No questions in the prepared set yet. Use the Workbench above to develop questions and answers!")
 
 # -----------------------------------------------------------------------------
 # 11. MIC BUTTON & INPUT HANDLING
