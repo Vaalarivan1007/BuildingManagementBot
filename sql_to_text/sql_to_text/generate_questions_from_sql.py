@@ -16,8 +16,8 @@ TEXT_MODEL = "gemma2:9b"
 
 # 2. MySQL Read-Only Connection via PyMySQL
 DB_CONFIG = {
-    "host": os.getenv("NMS_DB_HOST", "127.0.0.1"),
-    "port": int(os.getenv("NMS_DB_PORT", 3307)),
+    "host": os.getenv("NMS_DB_HOST", "10.20.31.15"),
+    "port": int(os.getenv("NMS_DB_PORT", 3306)),
     "user": os.getenv("NMS_DB_USER", "omcsrouser"),
     "password": os.getenv("NMS_DB_PASS", "RoOmcs@123"),
     "database": os.getenv("NMS_DB_NAME", "OMCSMGMT_2_0_0"),

@@ -925,6 +925,18 @@ with tab3:
         catalog = OMCSSchemaCatalog()
         agent = SilverValidationAgent(catalog)
         summary = agent.get_domain_summary()
+        if "omcs_connector" not in st.session_state:
+            # Auto-connect to live OMCS database on initial load
+            init_conn = OMCSDatabaseConnector(
+                host="10.20.31.15",
+                port=3306,
+                user="omcsrouser",
+                password="RoOmcs@123",
+                database="OMCSMGMT_2_0_0"
+            )
+            init_conn.connect()
+            st.session_state["omcs_connector"] = init_conn
+
         connector: Optional[OMCSDatabaseConnector] = st.session_state.get("omcs_connector")
         is_live_connected = connector.is_connected if connector else False
 
@@ -947,10 +959,10 @@ with tab3:
                 db_port = st.number_input("Port", value=3306, step=1, key="omcs_port_inp")
             with col_c2:
                 db_name = st.text_input("Database Name", value="OMCSMGMT_2_0_0", key="omcs_name_inp")
-                db_user = st.text_input("User", value="omcsuser", key="omcs_user_inp")
+                db_user = st.text_input("User", value="omcsrouser", key="omcs_user_inp")
             with col_c3:
-                db_pass = st.text_input("Password", value="", type="password", key="omcs_pass_inp")
-                st.caption("Default OMCS credentials pre-filled from `note.txt`.")
+                db_pass = st.text_input("Password", value="RoOmcs@123", type="password", key="omcs_pass_inp")
+                st.caption("Live read-only OMCS credentials from `generate_questions_from_sql.py`.")
 
             col_act1, col_act2 = st.columns(2)
             with col_act1:
@@ -964,8 +976,8 @@ with tab3:
                             database=db_name
                         )
                         success, msg = new_conn.connect()
+                        st.session_state["omcs_connector"] = new_conn
                         if success:
-                            st.session_state["omcs_connector"] = new_conn
                             st.toast("✅ Connected to live OMCS database!")
                             st.rerun()
                         else:
@@ -974,7 +986,15 @@ with tab3:
                 if st.button("🔄 Disconnect / Use Offline Schema Engine", use_container_width=True):
                     if connector:
                         connector.close()
-                    st.session_state["omcs_connector"] = None
+                    disconn = OMCSDatabaseConnector(
+                        host=db_host,
+                        port=int(db_port),
+                        user=db_user,
+                        password=db_pass,
+                        database=db_name
+                    )
+                    disconn.is_connected = False
+                    st.session_state["omcs_connector"] = disconn
                     st.toast("Using Offline Schema Engine.")
                     st.rerun()
 

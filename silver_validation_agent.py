@@ -172,8 +172,8 @@ class OMCSDatabaseConnector:
         self,
         host: str = "10.20.31.15",
         port: int = 3306,
-        user: str = "omcsuser",
-        password: str = "",
+        user: str = "omcsrouser",
+        password: str = "RoOmcs@123",
         database: str = "OMCSMGMT_2_0_0"
     ):
         self.host = host

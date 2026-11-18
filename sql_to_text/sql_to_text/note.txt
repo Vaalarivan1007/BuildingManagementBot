@@ -7,7 +7,8 @@ MySQL Server IP address : 10.20.31.15
 MySQL Server Port : 3306
 MySQL DB Name : OMCSMGMT_2_0_0
 MySQL Login User : omcsuser
-MySQL Login Password : 
+MySQL Read-Only User : omcsrouser
+MySQL Read-Only Password : RoOmcs@123
 
 mysqldump -h10.20.31.15 -uomcsuser -p --no-data OMCSMGMT_2_0_0 > OMCSMGMT_2_0_0_schema.sql
 mysqldump -h10.20.31.15 -uomcsuser -p --no-data --compact OMCSMGMT_2_0_0 > OMCSMGMT_2_0_0_schema.sql
