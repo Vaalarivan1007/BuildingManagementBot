@@ -55,10 +55,19 @@ except ImportError:
 
 # Import OMCS Silver Validation Agent safely (New Feature)
 try:
-    from silver_validation_agent import SilverValidationAgent, OMCSSchemaCatalog, DOMAIN_CLUSTERS
+    from silver_validation_agent import (
+        SilverValidationAgent,
+        OMCSSchemaCatalog,
+        DOMAIN_CLUSTERS,
+        COMPLEXITY_TIERS,
+        USER_PERSONAS
+    )
     SILVER_AGENT_AVAILABLE = True
 except ImportError:
     SILVER_AGENT_AVAILABLE = False
+    DOMAIN_CLUSTERS = {}
+    COMPLEXITY_TIERS = []
+    USER_PERSONAS = []
 
 DB_MEMORY_FILE = "db_history.json"
 BOOKMARKS_FILE = "categorized_bookmarks.json"
