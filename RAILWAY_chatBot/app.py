@@ -105,10 +105,10 @@ def get_railway_agent():
     agent.load()
     return agent
 
-@st.cache_resource(show_spinner="Initializing Railway Database Connector...")
+@st.cache_resource(show_spinner="Connecting to Railway Database...")
 def get_db_connector():
     connector = OMCSDatabaseConnector()
-    connector.is_connected = False  # Start in Offline Schema mode; use sidebar to connect live
+    connector.connect()
     return connector
 
 agent = get_railway_agent()
@@ -228,11 +228,11 @@ def build_railway_master_chart(question: str, df: pd.DataFrame):
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("### 🔌 Database Connection")
-    conn_status = "Live Connected" if connector.is_connected else "Offline Schema Mode"
-    badge_color = "#4ade80" if connector.is_connected else "#38bdf8"
+    conn_status = "Connected" if connector.is_connected else "Disconnected"
+    badge_color = "#4ade80" if connector.is_connected else "#f87171"
     st.markdown(
         f'<div class="connected-badge" style="color: {badge_color};">'
-        f'● <b>{conn_status}</b>: OMCSMGMT_2_0_0 ({connector.host}:{connector.port})'
+        f'● <b>{conn_status}</b>: OMCSMGMT_2_0_0 ({DEFAULT_DB_CONFIG["host"]}:{DEFAULT_DB_CONFIG["port"]})'
         f'</div>',
         unsafe_allow_html=True
     )
@@ -426,22 +426,13 @@ def run_pipeline(question: str):
 st.markdown("# 🚆 Railway Network AI Master Agent")
 st.caption("Autonomous FCAPS Control Room Operations & Central Management Intelligence (OMCSMGMT_2_0_0)")
 
-if connector.is_connected:
-    st.markdown(
-        f'<div class="connected-badge">'
-        f'🟢 Live Database Connected: <b>{connector.database}</b> on <b>{connector.host}:{connector.port}</b> '
-        f'| <b>173 Tables</b> | Model: <b>Qwen 2.5 Coder (7B)</b>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-else:
-    st.markdown(
-        '<div class="connected-badge" style="border-color: #38bdf8; color: #7dd3fc; background-color: #0f172a;">'
-        '🟡 Offline Schema Intelligence Mode: <b>OMCSMGMT_2_0_0_schema.sql</b> '
-        '| <b>173 Tables Indexed</b> | Model: <b>Qwen 2.5 Coder (7B)</b>'
-        '</div>',
-        unsafe_allow_html=True
-    )
+st.markdown(
+    '<div class="connected-badge">'
+    '🟢 Live Database Connected: <b>OMCSMGMT_2_0_0</b> on <b>10.20.31.15:3306</b> '
+    '| <b>173 Tables</b> | Model: <b>Qwen 2.5 Coder (7B)</b>'
+    '</div>',
+    unsafe_allow_html=True
+)
 
 # Demo Suggestion Chips
 st.markdown("**⚡ Quick Operational Actions:**")
