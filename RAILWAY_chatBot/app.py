@@ -43,6 +43,43 @@ from railway_tools import (
 from railway_agent_core import RailwayAgent, AgentExecutionResult
 import voice_module as vm
 
+if "authenticated" not in st.session_state:
+  st.session_state.authenticated = False
+
+def login():
+  st.title("Login")
+  with st.form("login_form"):
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    submitted = st.form_submit_button("Log in")
+
+  if submitted:
+    expected_password = st.secrets.get("credentials", {}).get(username)
+    if expected_password and password == expected_password:
+      st.session_state.authenticated = True
+      st.session_state.username = username
+      st.rerun()
+    else:
+      st.error("Invalid username or password.")
+
+
+def logout():
+  st.session_state.authenticated = False
+  st.session_state.pop("username", None)
+  st.rerun()
+
+
+if not st.session_state.authenticated:
+  login()
+  st.stop()
+
+# --- Protected App Content ---
+st.sidebar.write(f"Logged in as **{st.session_state.username}**")
+st.sidebar.button("Log out", on_click=logout)
+
+st.title("Dashboard")
+st.write("Welcome to the protected app.")
+
 # -----------------------------------------------------------------------------
 # 3. CUSTOM STYLING (BMS MASTER THEME - POLISHED DARK MODE)
 # -----------------------------------------------------------------------------
