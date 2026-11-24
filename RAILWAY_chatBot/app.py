@@ -535,4 +535,3 @@ if st.session_state["pending_query"]:
 user_query = st.chat_input("Ask a question about railway alarms, network elements, stations, or telemetry...")
 if user_query:
     run_pipeline(user_query)
-S
