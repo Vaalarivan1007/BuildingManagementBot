@@ -2,7 +2,7 @@
 """
 railway_agent_core.py - Autonomous Railway Operations Master Agent
 Powered by Qwen 2.5 Coder via Ollama with deterministic sub-second intent dispatch,
-intelligent fault diagnosis, and smart human synthesis.
+strict schema grounding on OMCSMGMT_2_0_0, zero hallucination, and smart Mode B synthesis.
 """
 
 from __future__ import annotations
@@ -17,46 +17,41 @@ import pandas as pd
 
 import railway_tools
 from railway_tools import (
-    TOOLS_SCHEMA,
+    OMCSDatabaseConnector,
+    validate_railway_sql,
+    format_dataframe_human_friendly,
     execute_railway_tool,
-    SEVERITY_MAPPING,
-    load_all_memories
+    load_all_memories,
+    save_memory_fact
 )
 
-OMCS_SYS_PROMPT_FILE = "OMCS_system_prompt.txt"
-with open(OMCS_SYS_PROMPT_FILE, "r", encoding="utf-8") as f:
-    OMCS_SYS_PROMPT = f'''
+# -----------------------------------------------------------------------------
+# 1. LOAD MASTER SYSTEM PROMPTS
+# -----------------------------------------------------------------------------
+PROMPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OMCS_SYS_PROMPT_FILE = os.path.join(PROMPT_DIR, "OMCS_system_prompt.txt")
 
-    {f.read()}
+try:
+    with open(OMCS_SYS_PROMPT_FILE, "r", encoding="utf-8") as f:
+        OMCS_SYS_PROMPT = f.read().strip()
+except Exception:
+    OMCS_SYS_PROMPT = "You are the OMCS Railway Operations AI Assistant. Generate safe, read-only MySQL queries."
 
-    '''
-
-SYSTEM_AGENT_PROMPT = """You are the autonomous Master AI Agent for the Railway Central Network Management & Control System (OMCSMGMT_2_0_0).
-You supervise railway network elements (routers, switches, CCTV feeds, servers), active alarms, SNMP polling telemetry, and FRACAS tickets.
-
-AVAILABLE TOOLS:
-1. `query_railway_database`: Runs safe read-only queries on OMCS database (activealarms, nedetails, snmppollstatus, stationdetails, cctvreadings).
-2. `diagnose_railway_faults`: Analyzes critical alarms, root causes, and top failing subsystems (MOC/MOI).
-3. `inspect_network_elements`: Audits railway network hardware status, IP addresses, and administrative states (Up/Down/Maintenance).
-4. `manage_railway_memory_and_rules`: Stores and retrieves persistent operational rules and aliases in railway_train_db.
-
-CRITICAL OPERATIONAL RULES:
-- Call tools using native tool-calling or formulate read-only SQL.
-- NEVER output raw JSON tool code or internal schema dictionaries in text to the user.
-- Provide crisp, authoritative railway control room insights: highlight critical alarm counts, root cause findings, and actionable recommendations.
+MODE_B_PROMPT = """You are the OMCS Data Assistant for a metro railway network. OMCS is the Operations Monitoring and Control System.
+Your users are railway operations managers, shift supervisors, and executives, NOT database administrators.
+Explain the database query results in plain English for a non-technical reader:
+- First line: The direct answer to what the user asked in one clear sentence.
+- Then at most 5 short bullets with the key facts, counts, equipment names, or status.
+- Turn timestamps/epochs into human-readable words (e.g. 'September 24, 2025 at 5:27 PM').
+- If no records were found, clearly state that no records match the criteria.
+- Never mention SQL, table names, column names, joins, or internal IDs in your explanation.
+- Do not hallucinate any information that is not in the query results.
 """
 
-SYSTEM_AGENT_PROMPT = f'''
 
-  {OMCS_SYS_PROMPT}
-
- NEVER output raw JSON tool code or internal schema dictionaries in text to the user.
-
-  Combine MODE A and MODE B and give me final descriptive answer to the user query
-
-'''
-print(SYSTEM_AGENT_PROMPT)
-
+# -----------------------------------------------------------------------------
+# 2. EXECUTION RESULT CONTAINER
+# -----------------------------------------------------------------------------
 class AgentExecutionResult:
     def __init__(
         self,
@@ -75,68 +70,103 @@ class AgentExecutionResult:
         self.metrics = metrics or []
 
 
+# -----------------------------------------------------------------------------
+# 3. RAILWAY AGENT MASTER CLASS
+# -----------------------------------------------------------------------------
 class RailwayAgent:
     def __init__(
         self,
-        model_name: str = "qwen2.5-coder:7b",
-        host: str = "http://localhost:11434"
+        model_name: Optional[str] = None,
+        host: Optional[str] = None
     ):
-        self.model_name = model_name
-        self.host = host
-        self.client = ollama.Client(host=host)
+        self.model_name = model_name or os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
+        self.host = host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        self.client = ollama.Client(host=self.host)
 
     def load(self) -> RailwayAgent:
         """Confirms Ollama reachability and checks model availability."""
         try:
             models = self.client.list()
             names = [m.get("model", m.get("name", "")) for m in models.get("models", [])]
+            if not any(self.model_name in n for n in names):
+                pass
         except Exception:
-            return self
-
-        if not any(self.model_name in n for n in names):
             pass
         return self
 
-    def _extract_tool_calls_from_text(self, raw_text: str) -> List[Dict[str, Any]]:
-        """Extracts JSON tool calls if the model emitted raw text blocks."""
-        extracted = []
-        if not raw_text or not isinstance(raw_text, str):
-            return extracted
+    def _extract_sql_from_text(self, text: str) -> Optional[str]:
+        """Extracts SQL query from Markdown code block or raw text."""
+        if not text:
+            return None
+        sql_match = re.search(r"```(?:sql|mysql)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+        if sql_match:
+            return sql_match.group(1).strip()
+        # Fallback: check for standalone SELECT or WITH
+        clean = text.strip()
+        if clean.upper().startswith(("SELECT", "WITH")):
+            return clean
+        return None
 
-        pos = 0
-        while pos < len(raw_text):
-            idx = raw_text.find('{"name"', pos)
-            if idx == -1:
-                idx = raw_text.find('{ "name"', pos)
-            if idx == -1:
-                break
+    def _synthesize_mode_b_with_llm(
+        self,
+        user_query: str,
+        data_records: List[Dict[str, Any]],
+        raw_sql: str
+    ) -> str:
+        """Uses Qwen to generate authoritative, non-hallucinating Mode B explanations."""
+        if not data_records:
+            return f"No records were found matching your request for **\"{user_query}\"** in the OMCS database."
 
-            brace_count = 0
-            end_idx = idx
-            for i in range(idx, len(raw_text)):
-                if raw_text[i] == '{':
-                    brace_count += 1
-                elif raw_text[i] == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        end_idx = i + 1
-                        break
+        # Pass at most 15 sample records to the LLM to avoid context bloat
+        sample_records = data_records[:15]
+        user_message = (
+            f"User Question: {user_query}\n\n"
+            f"Database Records (total {len(data_records)}):\n"
+            f"{json.dumps(sample_records, default=str, indent=2)}"
+        )
 
-            chunk = raw_text[idx:end_idx]
-            pos = end_idx if end_idx > idx else idx + 1
-            try:
-                data = json.loads(chunk)
-                if isinstance(data, dict) and "name" in data:
-                    extracted.append({
-                        "function": {
-                            "name": data.get("name"),
-                            "arguments": data.get("arguments", {})
-                        }
-                    })
-            except Exception:
-                pass
+        try:
+            resp = self.client.chat(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": MODE_B_PROMPT},
+                    {"role": "user", "content": user_message}
+                ],
+                options={"temperature": 0.1, "num_predict": 350}
+            )
+            msg_content = resp.get("message", {}).get("content", "").strip()
+            if msg_content:
+                return msg_content
+        except Exception:
+            pass
 
-        return extracted
+        # Fallback deterministic synthesis if LLM is unavailable
+        return self._fallback_deterministic_synthesis(user_query, data_records)
+
+    def _fallback_deterministic_synthesis(
+        self,
+        user_query: str,
+        data_records: List[Dict[str, Any]]
+    ) -> str:
+        """Deterministic bullet-point summary directly from data."""
+        total = len(data_records)
+        if total == 0:
+            return f"No records were found matching your inquiry for **\"{user_query}\"**."
+
+        first_rec = data_records[0]
+        keys = list(first_rec.keys())
+
+        lines = [f"Found **{total}** matching record{'s' if total > 1 else ''} for your inquiry."]
+        
+        # Add up to 5 informative sample bullets
+        for idx, rec in enumerate(data_records[:5], 1):
+            details = ", ".join(f"**{k}:** {rec[k]}" for k in keys[:3] if rec.get(k) is not None)
+            lines.append(f"- {details}")
+
+        if total > 5:
+            lines.append(f"- *... and {total - 5} additional records displayed in the table below.*")
+
+        return "\n".join(lines)
 
     def run(
         self,
@@ -145,409 +175,311 @@ class RailwayAgent:
         context: Optional[Dict[str, Any]] = None
     ) -> AgentExecutionResult:
         """
-        Autonomous single-turn/two-turn tool execution for Railway Network Management.
-        Combines deterministic sub-second dispatch with Ollama Qwen 2.5 Coder reasoning.
+        Processes railway inquiries with deterministic sub-second intent routing,
+        safe SQL generation, direct database querying, and smart Mode B synthesis.
         """
         context = context or {}
-        executed_tool_calls: List[Dict[str, Any]] = []
-        collected_dfs: List[pd.DataFrame] = []
-        last_sql: str = ""
-        should_plot = False
-        metrics = []
+        connector: OMCSDatabaseConnector = context.get("connector")
+        if not connector:
+            connector = OMCSDatabaseConnector()
+            connector.connect()
 
         q_lower = prompt.lower().strip()
 
-        # 1. Greetings handler
-        greetings = {"hi", "hello", "hey", "good morning", "good evening", "namaste"}
-        if q_lower in greetings:
+        # ---------------------------------------------------------------------
+        # 1. GREETINGS & CASUAL CONVERSATION HANDLER
+        # ---------------------------------------------------------------------
+        greetings = {"hi", "hello", "hey", "good morning", "good evening", "namaste", "who are you", "help"}
+        if q_lower in greetings or any(q_lower == g for g in greetings):
             return AgentExecutionResult(
-                answer="🚆 **Hello, Control Room Operator!** I am your Railway Operations AI Master Agent. Connected to `OMCSMGMT_2_0_0`. I can audit active alarms, inspect network elements, analyze SNMP telemetry, and diagnose system faults. What would you like to investigate?",
+                answer=(
+                    "🚆 **Hello, Control Room Operator!** I am your OMCS Railway Operations AI Assistant. "
+                    "I am connected to the live railway management database (`OMCSMGMT_2_0_0`).\n\n"
+                    "You can ask me questions about:\n"
+                    "- **Sensor Types & Deployed Sensors** (e.g. *\"what are the sensor types?\"*, *\"what sensors are present?\"*)\n"
+                    "- **Master Clock & Moba System Alarms** (e.g. *\"what is the recent alarms on Moba or Masterclock?\"*)\n"
+                    "- **Active & Critical Alarms** (e.g. *\"top 5 most frequent active alarms\"*, *\"show critical alarms\"*)\n"
+                    "- **Equipment Reachability** (e.g. *\"how many devices are offline right now?\"*, *\"list offline devices\"*)\n"
+                    "- **Railway Stations & Hardware Catalog** (e.g. *\"show all stations\"*, *\"show CCTV cameras\"*)\n\n"
+                    "What would you like to investigate?"
+                ),
                 tool_calls=[]
             )
 
-        # 2. Check for explicit plot keywords
-        plot_keywords = ["plot", "graph", "chart", "visualize", "distribution", "trend", "pie", "frequent", "top"]
-        if any(k in q_lower for k in plot_keywords):
-            should_plot = True
-
-        # Extract numeric limit if specified
+        # ---------------------------------------------------------------------
+        # 2. DETERMINISTIC HIGH-SPEED INTENT ROUTER (<0.05s)
+        # ---------------------------------------------------------------------
         lim_match = re.search(r"\b(?:top|latest|first|last)\s+(\d+)\b", q_lower)
         eff_limit = int(lim_match.group(1)) if lim_match else 50
+        
+        plot_keywords = ["plot", "graph", "chart", "visualize", "distribution", "pie", "bar"]
+        should_plot = any(k in q_lower for k in plot_keywords)
 
-        # 3. Fast-path intent matching for zero-latency instant response
-        tool_calls: List[Dict[str, Any]] = []
+        sql_to_execute: Optional[str] = None
 
-        # Intent A: Top Frequent Alarms (Matches "top 5 most frequent active alarms", "frequent alarms", etc.)
-        if any(w in q_lower for w in ["frequent", "recurring", "common"]) or ("top" in q_lower and "alarm" in q_lower):
-            tool_calls = [{
-                "function": {
-                    "name": "query_railway_database",
-                    "arguments": {
-                        "natural_request": f"top {eff_limit} most frequent alarms",
-                        "limit": eff_limit
-                    }
-                }
-            }]
+        # Intent A: Sensor Types
+        if any(k in q_lower for k in ["sensor type", "sensor types", "types of sensor", "types of sensors", "kind of sensor"]):
+            sql_to_execute = f"""
+            SELECT 
+                nesubtypeid AS `Subtype ID`, 
+                nesubtypename AS `Sensor Type`, 
+                nesubtypemodel AS `Model`, 
+                nesubtypemake AS `Make` 
+            FROM nesubtypedetails 
+            WHERE nesubtypename LIKE '%sensor%' OR nesubtypename LIKE '%fence%' 
+            ORDER BY nesubtypeid 
+            LIMIT {eff_limit};
+            """
+
+        # Intent B: Sensors Present / Deployed
+        elif any(k in q_lower for k in ["sensors present", "sensor present", "sensors deployed", "sensors installed", "what sensors are there", "what sensors are present", "fence sensor"]):
+            sql_to_execute = f"""
+            SELECT 
+                n.neid AS `Device ID`, 
+                n.nename AS `Sensor Name`, 
+                s.nesubtypename AS `Sensor Type`, 
+                g.groupname AS `System`,
+                CASE n.neadminstate WHEN 1 THEN 'Managed / Up' WHEN 2 THEN 'Unmanaged / Down' ELSE 'Maintenance' END AS `Status`
+            FROM nedetails n 
+            JOIN neversiondetails v ON n.neversionnumber = v.neversionnumber 
+            JOIN nesubtypedetails s ON v.neversionnesubtypeid = s.nesubtypeid 
+            JOIN groupdetails g ON n.negroupid = g.groupid 
+            WHERE s.nesubtypename LIKE '%sensor%' OR g.groupname LIKE '%sensor%' OR g.groupname = 'FENCE' 
+            ORDER BY n.neid 
+            LIMIT {eff_limit};
+            """
+
+        # Intent C: Moba / Mobatime / Master Clock / Digital Clock Alarms
+        elif any(k in q_lower for k in ["moba", "mobatime", "masterclock", "master clock", "digital clock", "mcs alarm", "clock alarm", "alarms on moba", "alarms on masterclock"]):
+            sql_to_execute = f"""
+            SELECT 
+                a.recordid AS `Alarm ID`, 
+                n.nename AS `Device`, 
+                s.nesubtypename AS `Device Type`, 
+                g.groupname AS `System`, 
+                COALESCE(sp.specificproblemname, a.additionaltext, 'Link Alert') AS `Alarm Description`, 
+                p.perceivedseverityname AS `Severity`, 
+                DATE_FORMAT(FROM_UNIXTIME(a.eventtime), '%Y-%m-%d %h:%i:%s %p') AS `Event Time` 
+            FROM activealarms a 
+            JOIN nedetails n ON a.neid = n.neid 
+            LEFT JOIN neversiondetails v ON n.neversionnumber = v.neversionnumber 
+            LEFT JOIN nesubtypedetails s ON v.neversionnesubtypeid = s.nesubtypeid 
+            LEFT JOIN groupdetails g ON n.negroupid = g.groupid 
+            LEFT JOIN specificproblems sp ON a.specificproblem = sp.specificproblemid 
+            LEFT JOIN perceivedseverity p ON a.perceivedseverity = p.perceivedseverityid 
+            WHERE g.groupname = 'MCS' OR s.nesubtypename LIKE '%clock%' OR n.nename LIKE '%clock%' OR n.nename LIKE '%moba%' 
+            ORDER BY a.eventtime DESC 
+            LIMIT {eff_limit};
+            """
+
+        # Intent D: Top Most Frequent Alarms
+        elif any(k in q_lower for k in ["frequent", "recurring", "common"]) or ("top" in q_lower and "alarm" in q_lower):
             should_plot = True
+            sql_to_execute = f"""
+            SELECT 
+                COALESCE(sp.specificproblemname, at.alarmtypeadditionaltext, a.ticketmessage, 'Hardware/Link Alert') AS `Alarm Description`, 
+                a.moc AS `Subsystem`, 
+                COUNT(*) AS `Active Count`, 
+                CASE MAX(a.perceivedseverity) 
+                    WHEN 1 THEN 'Critical' 
+                    WHEN 2 THEN 'Major' 
+                    WHEN 3 THEN 'Minor' 
+                    WHEN 4 THEN 'Warning' 
+                    WHEN 5 THEN 'Indeterminate' 
+                    ELSE 'Cleared' 
+                END AS `Severity` 
+            FROM activealarms a 
+            LEFT JOIN specificproblems sp ON a.specificproblem = sp.specificproblemid 
+            LEFT JOIN alarmtypedetails at ON a.alarmtypeid = at.alarmtypeid 
+            GROUP BY `Alarm Description`, a.moc 
+            ORDER BY `Active Count` DESC 
+            LIMIT {eff_limit};
+            """
 
-        # Intent B: Alarm Severity Distribution Plot
-        elif "severity" in q_lower or ("plot" in q_lower and "alarm" in q_lower):
-            tool_calls = [{
-                "function": {
-                    "name": "query_railway_database",
-                    "arguments": {"natural_request": "alarm severity distribution"}
-                }
-            }]
+        # Intent E: Alarm Severity Distribution
+        elif any(k in q_lower for k in ["severity distribution", "alarm severity", "count by severity"]) or ("severity" in q_lower and "plot" in q_lower):
             should_plot = True
+            sql_to_execute = """
+            SELECT 
+                p.perceivedseverityname AS `Severity`, 
+                COUNT(*) AS `Active Alarms` 
+            FROM activealarms a 
+            JOIN perceivedseverity p ON p.perceivedseverityid = a.perceivedseverity 
+            GROUP BY p.perceivedseverityname, p.perceivedseverityid 
+            ORDER BY p.perceivedseverityid ASC;
+            """
 
-        # Intent C: Active Critical Alarms
-        elif any(k in q_lower for k in ["critical", "severity 1", "sev 1", "urgent"]):
-            tool_calls = [{
-                "function": {
-                    "name": "query_railway_database",
-                    "arguments": {"natural_request": "active critical alarms", "limit": eff_limit}
-                }
-            }]
+        # Intent F: Active Critical Alarms
+        elif any(k in q_lower for k in ["critical alarm", "critical alarms", "severity 1", "active critical", "urgent alarm"]):
+            sql_to_execute = f"""
+            SELECT 
+                a.recordid AS `Alarm ID`, 
+                COALESCE(n.nename, CONCAT('NE #', a.neid)) AS `Device`, 
+                a.moc AS `Subsystem`, 
+                'Critical' AS `Severity`, 
+                COALESCE(sp.specificproblemname, a.additionaltext, 'Critical Link Alert') AS `Alarm Description`, 
+                COALESCE(pc.probablecausename, 'Connection Establishment Error') AS `Probable Cause`, 
+                DATE_FORMAT(FROM_UNIXTIME(a.eventtime), '%Y-%m-%d %h:%i:%s %p') AS `Event Time` 
+            FROM activealarms a 
+            LEFT JOIN nedetails n ON a.neid = n.neid 
+            LEFT JOIN specificproblems sp ON a.specificproblem = sp.specificproblemid 
+            LEFT JOIN probablecauses pc ON a.probablecause = pc.probablecauseid 
+            WHERE a.perceivedseverity = 1 
+            ORDER BY a.eventtime DESC 
+            LIMIT {eff_limit};
+            """
 
-        # Intent D: Diagnosis & Fault Audit
-        elif any(k in q_lower for k in ["diagnose", "diagnosis", "fault analysis", "health check", "audit alarms"]):
-            tool_calls = [{
-                "function": {
-                    "name": "diagnose_railway_faults",
-                    "arguments": {"severity_threshold": 2, "lookback_hours": 24}
-                }
-            }]
+        # Intent G: Devices Offline Right Now
+        elif any(k in q_lower for k in ["offline right now", "offline now", "how many devices are offline", "devices down now"]):
+            sql_to_execute = "SELECT COUNT(*) AS `Devices offline now` FROM nestatus WHERE nestatusisreachable = 0 LIMIT 1;"
 
-        # Intent E: Offline / Down Devices
-        elif any(k in q_lower for k in ["offline", "unreachable", "down devices", "down nodes", "disconnected", "unmanaged"]):
-            tool_calls = [{
-                "function": {
-                    "name": "inspect_network_elements",
-                    "arguments": {"show_offline_only": True, "limit": eff_limit}
-                }
-            }]
+        # Intent H: List Offline Devices
+        elif any(k in q_lower for k in ["offline devices", "down devices", "unreachable devices", "list offline"]):
+            sql_to_execute = f"""
+            SELECT 
+                n.neid AS `Device ID`, 
+                n.nename AS `Device Name`, 
+                g.groupname AS `System`, 
+                'Unreachable' AS `Status`, 
+                DATE_FORMAT(FROM_UNIXTIME(s.nestatuseventtime), '%Y-%m-%d %h:%i:%s %p') AS `Offline Since` 
+            FROM nestatus s 
+            JOIN nedetails n ON n.neid = s.nestatusneid 
+            LEFT JOIN groupdetails g ON g.groupid = n.negroupid 
+            WHERE s.nestatusisreachable = 0 
+            ORDER BY s.nestatuseventtime DESC 
+            LIMIT {eff_limit};
+            """
 
-        # Intent F: SNMP Polling Telemetry
-        elif any(k in q_lower for k in ["snmp", "poll status", "polling health", "polling"]):
-            tool_calls = [{
-                "function": {
-                    "name": "query_railway_database",
-                    "arguments": {"natural_request": "snmp polling health", "limit": eff_limit}
-                }
-            }]
-
-        # Intent G: Stations Information
+        # Intent I: Railway Stations
         elif any(k in q_lower for k in ["station", "stations"]):
-            tool_calls = [{
-                "function": {
-                    "name": "query_railway_database",
-                    "arguments": {"natural_request": "station details", "limit": eff_limit}
-                }
-            }]
+            sql_to_execute = f"""
+            SELECT 
+                stationname AS `Station`, 
+                stationshortname AS `Code`, 
+                stationcity AS `City`, 
+                stationplatforms AS `Platforms` 
+            FROM stationdetails 
+            ORDER BY stationname ASC 
+            LIMIT {eff_limit};
+            """
 
-        # Intent H: Network Elements & Hardware Inventory
-        elif any(k in q_lower for k in ["network element", "ne details", "hardware", "switches", "routers"]):
-            tool_calls = [{
-                "function": {
-                    "name": "inspect_network_elements",
-                    "arguments": {"show_offline_only": False, "limit": eff_limit}
-                }
-            }]
+        # Intent J: CCTV Cameras
+        elif any(k in q_lower for k in ["cctv", "camera", "cameras"]):
+            sql_to_execute = f"""
+            SELECT 
+                n.neid AS `Device ID`, 
+                n.nename AS `Camera Name`, 
+                s.nesubtypename AS `Type`, 
+                CASE n.neadminstate WHEN 1 THEN 'Managed / Up' WHEN 2 THEN 'Unmanaged / Down' ELSE 'Maintenance' END AS `Status` 
+            FROM nedetails n 
+            JOIN neversiondetails v ON n.neversionnumber = v.neversionnumber 
+            JOIN nesubtypedetails s ON v.neversionnesubtypeid = s.nesubtypeid 
+            WHERE s.nesubtypename = 'CCTV' 
+            ORDER BY n.neid ASC 
+            LIMIT {eff_limit};
+            """
 
-        # Intent I: CCTV / Video Surveillance
-        elif any(k in q_lower for k in ["cctv", "camera"]):
-            tool_calls = [{
-                "function": {
-                    "name": "query_railway_database",
-                    "arguments": {"natural_request": "cctv readings", "limit": eff_limit}
-                }
-            }]
-
-        # 4. Fallback to Ollama with native tool calling
-        if not tool_calls:
-            messages: List[Dict[str, Any]] = [
-                {"role": "system", "content": SYSTEM_AGENT_PROMPT}
+        # ---------------------------------------------------------------------
+        # 3. LLM TEXT-TO-SQL FALLBACK (FOR ARBITRARY / COMPLEX QUERIES)
+        # ---------------------------------------------------------------------
+        if not sql_to_execute:
+            messages = [
+                {"role": "system", "content": OMCS_SYS_PROMPT}
             ]
             if history:
                 for h in history[-3:]:
-                    role = h.get("role", "user")
-                    content = h.get("content", "")
-                    if role in ["user", "assistant"] and content:
-                        messages.append({"role": role, "content": content})
-
+                    r = h.get("role")
+                    c = h.get("content")
+                    if r in ["user", "assistant"] and c:
+                        messages.append({"role": r, "content": c})
             messages.append({"role": "user", "content": prompt})
 
-            content = ""
             try:
-                response = self.client.chat(
+                llm_resp = self.client.chat(
                     model=self.model_name,
                     messages=messages,
-                    tools=TOOLS_SCHEMA,
-                    options={"temperature": 0.1, "num_predict": 400}
+                    options={"temperature": 0.0, "num_predict": 400}
                 )
-                msg = response.get("message", {})
-                content = msg.get("content", "").strip()
-                tool_calls = msg.get("tool_calls") or []
+                raw_llm_text = llm_resp.get("message", {}).get("content", "")
+                sql_to_execute = self._extract_sql_from_text(raw_llm_text)
             except Exception:
                 pass
 
-            if not tool_calls and content:
-                tool_calls = self._extract_tool_calls_from_text(content)
+        # Ultimate fallback query if still no SQL
+        if not sql_to_execute:
+            sql_to_execute = f"""
+            SELECT 
+                a.recordid AS `Alarm ID`, 
+                COALESCE(n.nename, CONCAT('NE #', a.neid)) AS `Device`, 
+                a.moc AS `Subsystem`, 
+                p.perceivedseverityname AS `Severity`, 
+                COALESCE(sp.specificproblemname, a.additionaltext, 'Link Alert') AS `Alarm Description`, 
+                DATE_FORMAT(FROM_UNIXTIME(a.eventtime), '%Y-%m-%d %h:%i:%s %p') AS `Event Time` 
+            FROM activealarms a 
+            LEFT JOIN nedetails n ON a.neid = n.neid 
+            LEFT JOIN specificproblems sp ON a.specificproblem = sp.specificproblemid 
+            LEFT JOIN perceivedseverity p ON a.perceivedseverity = p.perceivedseverityid 
+            ORDER BY a.eventtime DESC 
+            LIMIT {eff_limit};
+            """
 
-            # Safety fallback to query_railway_database
-            if not tool_calls:
-                tool_calls = [{
-                    "function": {
-                        "name": "query_railway_database",
-                        "arguments": {"natural_request": prompt, "limit": eff_limit}
-                    }
-                }]
+        # ---------------------------------------------------------------------
+        # 4. EXECUTE SQL QUERY ON OMCS DATABASE
+        # ---------------------------------------------------------------------
+        executed_sql = ""
+        records: List[Dict[str, Any]] = []
+        df = pd.DataFrame()
+        tool_calls: List[Dict[str, Any]] = []
 
-        # 5. Execute tools in native Python (<0.05s)
-        tool_responses = []
-        for tc in tool_calls:
-            func = tc.get("function", {})
-            t_name = func.get("name", "")
-            t_args = func.get("arguments", {})
+        try:
+            clean_sql = validate_railway_sql(sql_to_execute)
+            executed_sql = clean_sql
+            query_res = connector.execute_query(clean_sql, limit=eff_limit)
 
-            if isinstance(t_args, str):
-                try:
-                    t_args = json.loads(t_args)
-                except Exception:
-                    t_args = {}
+            if query_res.get("status") == "success":
+                records = query_res.get("data", [])
+                if records:
+                    df = pd.DataFrame(records)
+                    df = format_dataframe_human_friendly(df)
+            else:
+                # Query syntax error - attempt quick self-correction if column error
+                err_msg = query_res.get("message", "")
+                if "Unknown column" in err_msg:
+                    # Retry with generic alarm query
+                    fallback_sql = f"SELECT recordid AS `Alarm ID`, neid AS `NE ID`, moc AS `Subsystem`, FROM_UNIXTIME(eventtime) AS `Event Time` FROM activealarms ORDER BY eventtime DESC LIMIT {eff_limit};"
+                    clean_sql = validate_railway_sql(fallback_sql)
+                    executed_sql = clean_sql
+                    retry_res = connector.execute_query(clean_sql, limit=eff_limit)
+                    if retry_res.get("status") == "success":
+                        records = retry_res.get("data", [])
+                        df = pd.DataFrame(records)
+                        df = format_dataframe_human_friendly(df)
 
-            t_res = execute_railway_tool(t_name, t_args, context=context)
-
-            executed_tool_calls.append({
-                "tool": t_name,
-                "arguments": t_args,
-                "result": t_res
+            tool_calls.append({
+                "tool": "query_railway_database",
+                "arguments": {"natural_request": prompt, "sql_query": executed_sql},
+                "result": {"status": "success", "row_count": len(records), "data": records}
             })
+        except Exception as e:
+            return AgentExecutionResult(
+                answer=f"⚠️ An error occurred while executing the railway query: {str(e)}",
+                tool_calls=[],
+                raw_sql=sql_to_execute
+            )
 
-            if "executed_sql" in t_res and t_res["executed_sql"]:
-                last_sql = t_res["executed_sql"]
-
-            if t_res.get("should_plot"):
-                should_plot = True
-
-            if "data" in t_res and isinstance(t_res["data"], list) and t_res["data"]:
-                df = pd.DataFrame(t_res["data"])
-                collected_dfs.append(df)
-
-            tool_responses.append({"tool": t_name, "arguments": t_args, "result": t_res})
-
-        # 6. Synthesize authoritative human response
-        final_answer = self._synthesize_smart_human_response(prompt, tool_responses, context)
+        # ---------------------------------------------------------------------
+        # 5. SYNTHESIZE FINAL HUMAN-GRADE ANSWER (MODE B)
+        # ---------------------------------------------------------------------
+        final_answer = self._synthesize_mode_b_with_llm(
+            user_query=prompt,
+            data_records=records,
+            raw_sql=executed_sql
+        )
 
         return AgentExecutionResult(
             answer=final_answer,
-            tool_calls=executed_tool_calls,
-            dataframes=collected_dfs,
-            raw_sql=last_sql,
-            should_plot=should_plot,
-            metrics=metrics
+            tool_calls=tool_calls,
+            dataframes=[df] if not df.empty else [],
+            raw_sql=executed_sql,
+            should_plot=should_plot
         )
-
-    def _synthesize_smart_human_response(
-        self,
-        prompt: str,
-        tool_responses: List[Dict[str, Any]],
-        context: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """
-        Synthesizes a deep, authoritative, and descriptive railway control room report.
-        Zero JSON code leakage. Provides deep technical breakdowns, event timelines,
-        subsystem impact assessments, and step-by-step engineering protocols.
-        """
-        q_lower = prompt.lower()
-        sections = []
-
-        for resp in tool_responses:
-            t_name = resp["tool"]
-            res = resp["result"]
-
-            if t_name == "diagnose_railway_faults":
-                total = res.get("total_active_alarms", 0)
-                crit = res.get("critical_alarms_count", 0)
-                major = res.get("major_alarms_count", 0)
-                minor = total - (crit + major)
-                top_probs = res.get("top_faulting_problems", [])
-                crit_pct = (crit / total * 100) if total else 0.0
-                major_pct = (major / total * 100) if total else 0.0
-
-                sections.append("# 🚨 Railway Central Network Operations — Comprehensive Fault Diagnostic Report")
-                sections.append(
-                    f"### 📊 System-Wide Alarm Summary & Incident Severity Tiers\n"
-                    f"- **Total Active Backlog:** `{total:,}` active, unacknowledged alarm tickets currently registered in `OMCSMGMT_2_0_0`.\n"
-                    f"- 🔴 **Critical Priority (Severity 1):** `{crit:,}` alarms (`{crit_pct:.1f}%` of total backlog). These represent immediate service-affecting communication losses, equipment down events, and transmission link failures.\n"
-                    f"- 🟠 **Major Priority (Severity 2):** `{major:,}` alarms (`{major_pct:.1f}%` of backlog). These indicate redundant path disruptions, degraded telemetry feeds, and secondary link anomalies.\n"
-                    f"- 🟡 **Minor / Warning Priority (Severity 3-4):** `{minor:,}` operational advisory events requiring scheduled maintenance review.\n"
-                )
-
-                if top_probs:
-                    sections.append("### 🔍 Root Failure Cause & Problem Classification")
-                    for idx, p in enumerate(top_probs, 1):
-                        p_name = p.get("problem_name", "Unknown Problem")
-                        p_cnt = p.get("alarm_count", 0)
-                        p_pct = (p_cnt / total * 100) if total else 0.0
-                        sections.append(
-                            f"{idx}. **{p_name}**\n"
-                            f"   - **Active Occurrences:** `{p_cnt:,}` alarms (`{p_pct:.1f}%` of overall fault volume)\n"
-                            f"   - **Engineering Classification:** Transmission & IP Communication Layer Failure (SNMP Poll Timeout)\n"
-                        )
-
-                sections.append(
-                    "### ⚠️ Control Room Operational Risk Assessment\n"
-                    "- **Station Surveillance (CCTV):** Significant volume of CCTV cameras unreachable from FMS. Loss of situational awareness on platform edges and concourses.\n"
-                    "- **Passenger Information (PIDS):** Multiple station concourse display units disconnected, preventing real-time train countdowns.\n"
-                    "- **Core Telecom Ring (Access Switches):** Critical layer-2 station switches are dropping SNMP heartbeats, impacting field telemetry collection.\n"
-                )
-
-                sections.append(
-                    "### 🛠️ Recommended Action Protocol for Shift Operators\n"
-                    "1. **Initiate Core Link Audit:** Verify main transmission backbone fiber ring status and edge router interfaces.\n"
-                    "2. **Station Power & UPS Verification:** Contact station electrical supervisors to rule out auxiliary power switchover glitches.\n"
-                    "3. **Acknowledge & Escalate:** Bulk-acknowledge confirmed recurring reachability traps to clean the active board, and assign high-priority FRACAS work orders for persistent switch outages.\n"
-                )
-
-            elif t_name == "inspect_network_elements":
-                row_count = res.get("row_count", 0)
-                is_offline = res.get("filter_applied", {}).get("offline_only", False)
-
-                if is_offline:
-                    sections.append("# 🟠 Railway Offline / Unmanaged Network Elements Audit")
-                    sections.append(
-                        f"Identified **{row_count}** network elements that are currently in an **Unmanaged (Down)** state or failing SNMP connectivity.\n\n"
-                        "### 🔍 Failure Impact on Operations\n"
-                        "- These elements are not responding to keepalive heartbeats from the central management platform.\n"
-                        "- Devices in unmanaged state cannot forward telemetry, alarms, or status updates to the Central Operations Center.\n\n"
-                        "### 📋 Device Inventory Details\n"
-                        "The table below details the Network Element ID, device name, administrative state, and system registration date. "
-                        "All timestamps have been converted to human-readable date and time for field dispatch tracking."
-                    )
-                else:
-                    sections.append("# 🌐 Central Railway Network Elements Catalog")
-                    sections.append(
-                        f"Retrieved **{row_count}** configured Network Elements across the railway division.\n\n"
-                        "### 🔍 Element Overview\n"
-                        "Includes core routers, access switches, CCTV nodes, TCR modules, and passenger information controllers. "
-                        "Review the table below for hardware versions, operational states, and commissioning timestamps."
-                    )
-
-            elif t_name == "manage_railway_memory_and_rules":
-                msg = res.get("message", "Rule updated successfully.")
-                sections.append(f"💾 **Train DB Persistent Memory Engine:** {msg}\n\nThis operational rule will be automatically applied to your future queries.")
-
-            else:  # query_railway_database
-                row_count = res.get("row_count", 0)
-                latency = res.get("latency_sec", 0.0)
-                data_list = res.get("data", [])
-
-                # Highly descriptive, detailed handling for top frequent alarms
-                if any(w in q_lower for w in ["frequent", "recurring", "common"]) or ("top" in q_lower and "alarm" in q_lower):
-                    sections.append("# 🚨 Comprehensive Top Recurring Active Alarms Analysis")
-                    sections.append(
-                        f"Detailed analysis of the most frequent alarm conditions across the **OMCSMGMT_2_0_0** central system (query completed in `{latency:.3f}s`):\n"
-                    )
-
-                    if data_list:
-                        sections.append("### 📋 Ranked Frequency & Operational Breakdown\n")
-                        subsystem_notes = {
-                            "cctv": (
-                                "Station video surveillance IP cameras have lost communication with the Central Fault Management Server (FMS). "
-                                "Operators lose platform clearance and passenger safety feeds. Typically caused by local PoE switch drop or IP address lease renewal timeout."
-                            ),
-                            "switch": (
-                                "Industrial access layer Ethernet switch aggregating local station field controllers has lost its management link. "
-                                "Indicates a fiber ring break, uplink transceiver degradation, or station power disruption."
-                            ),
-                            "tcr": (
-                                "Train Control & Routing (TCR) subsystem field telemetry unit unreachable. "
-                                "Critical for route setting verification, interlocking heartbeats, and signal status monitoring."
-                            ),
-                            "pids": (
-                                "Passenger Information Display System (PIDS) overhead platform displays disconnected. "
-                                "Direct passenger advisory impact: live train arrival schedules and safety announcements are halted."
-                            ),
-                            "ehts": (
-                                "Electronic Heating & Temperature Sensing (EHTS) track sensors unreachable. "
-                                "Monitors point machines and rail switch temperature to prevent thermal mechanical jamming."
-                            )
-                        }
-
-                        for idx, item in enumerate(data_list[:10], 1):
-                            desc = item.get("alarm_description", "Hardware / Link Alert")
-                            sub = item.get("subsystem", "Subsystem")
-                            freq = item.get("active_frequency", 0)
-                            sev = item.get("severity_level", "Critical")
-                            earliest = item.get("earliest_detected", "N/A")
-                            latest = item.get("latest_detected", "N/A")
-
-                            # Match subsystem description
-                            desc_lower = desc.lower()
-                            note = "Subsystem communication timeout requiring link layer inspection."
-                            for k, v in subsystem_notes.items():
-                                if k in desc_lower:
-                                    note = v
-                                    break
-
-                            sections.append(
-                                f"#### {idx}. {desc}\n"
-                                f"- **Target Subsystem / MOC:** `{sub}`\n"
-                                f"- **Active Alarm Count:** **`{freq:,}` occurrences**\n"
-                                f"- **Alarm Severity Classification:** `{sev}`\n"
-                                f"- **Event Timeline:** Active continuously from **`{earliest}`** to **`{latest}`**\n"
-                                f"- **Operational Impact & Mechanics:** {note}\n"
-                            )
-
-                        sections.append(
-                            "### 💡 Control Room Operational Recommendations\n"
-                            "1. **Prioritize Switch Uplinks:** Because access switches aggregate CCTV and PIDS, restoring the primary switches will automatically clear downstream device reachability alarms.\n"
-                            "2. **Verify Station Power & Fiber:** Focus initial maintenance dispatches on stations with concurrent CCTV and PIDS drops to check auxiliary power and fiber patch cables.\n"
-                            "3. **Track Event Durations:** Several alarms have been active for extended periods; review FRACAS ticket resolution history to verify if physical hardware replacements are pending."
-                        )
-
-                elif "critical" in q_lower or "severity 1" in q_lower:
-                    sections.append("# 🔴 Central Railway Critical Alarms Inspection Report")
-                    sections.append(
-                        f"Audited **{row_count}** critical (Severity 1) alarms flagged in `OMCSMGMT_2_0_0` (query took `{latency:.3f}s`).\n\n"
-                        "### 🔍 Critical Event Characteristics\n"
-                        "- **Severity Level:** 🔴 **Critical (Highest Tier)** — Requires immediate control room acknowledgment and field maintenance dispatch.\n"
-                        "- **Data Enrichment:** The table below decodes all technical codes into human-readable equipment names, readable date & time timestamps, problem descriptions, and probable causes.\n"
-                        "- **Recommended Protocol:** Validate whether affected devices share an identical station or power circuit before dispatching individual technicians."
-                    )
-                elif "severity" in q_lower or "distribution" in q_lower:
-                    sections.append("# 📊 Active Alarm Severity Distribution & Health Index")
-                    sections.append(
-                        f"Calculated the proportional breakdown of all active alarms currently registered in the database (query took `{latency:.3f}s`).\n\n"
-                        "### 🔍 Key Severity Metrics\n"
-                        "- **Critical (Severity 1):** Immediate danger to railway equipment, transmission links, or passenger-facing operations.\n"
-                        "- **Major (Severity 2):** Degradation of secondary channels or non-redundant backup paths.\n"
-                        "- **Minor & Warning (Severity 3-4):** Preventative alerts for scheduled maintenance cycles.\n\n"
-                        "Inspect the interactive Donut chart below to evaluate the health balance across the division."
-                    )
-                elif "snmp" in q_lower or "poll" in q_lower:
-                    sections.append("# 🟢 SNMP Polling Status & Telemetry Health")
-                    sections.append(
-                        f"Retrieved **{row_count}** recent SNMP polling telemetry logs from `OMCSMGMT_2_0_0` in `{latency:.3f}s`.\n\n"
-                        "### 🔍 Telemetry Diagnostics\n"
-                        "- **Polling Health:** Displays which nodes responded to SNMP keepalive queries vs which nodes timed out.\n"
-                        "- **Timestamp Tracking:** All polling times are displayed in standard normal date and time (`YYYY-MM-DD hh:mm:ss AM/PM`)."
-                    )
-                elif "station" in q_lower:
-                    sections.append("# 🏢 Divisional Railway Stations & Nodes Catalog")
-                    sections.append(
-                        f"Retrieved **{row_count}** operational railway stations from `stationdetails` in `{latency:.3f}s`.\n\n"
-                        "Includes station short codes, platform counts, geographical cities, and official commissioning dates."
-                    )
-                else:
-                    sections.append("# 🔍 Railway Operations Central Query Execution")
-                    sections.append(
-                        f"Retrieved **{row_count}** records from `OMCSMGMT_2_0_0` in `{latency:.3f}s`.\n\n"
-                        "All timestamps, equipment identifiers, and failure causes have been normalized into standard operational text."
-                    )
-
-        if not sections:
-            return "Command executed successfully. Please inspect the query output below."
-
-        return "\n\n".join(sections)

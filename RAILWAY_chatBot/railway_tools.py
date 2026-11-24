@@ -24,11 +24,11 @@ import pymysql
 # -----------------------------------------------------------------------------
 
 DEFAULT_DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "127.0.0.1"),
-    "port": int(os.getenv("DB_PORT", 3307)),
-    "user": os.getenv("DB_USER", "user"),
-    "password": os.getenv("DB_PASSWORD", "psss"),
-    "database": os.getenv("DB_NAME", "db_2_0_0")
+    "host": os.getenv("DB_HOST", "10.20.31.15"),
+    "port": int(os.getenv("DB_PORT", 3306)),
+    "user": os.getenv("DB_USER", "omcsrouser"),
+    "password": os.getenv("DB_PASSWORD", "RoOmcs@123"),
+    "database": os.getenv("DB_NAME", "OMCSMGMT_2_0_0")
 }
 
 TRAIN_DB_FILE = os.path.join(os.path.dirname(__file__), "railway_train_db.sqlite")
@@ -388,8 +388,63 @@ def query_railway_database(
     eff_limit = int(lim_match.group(1)) if lim_match else limit
 
     if not sql_query or not sql_query.strip().lower().startswith("select"):
-        # 1. Top Most Frequent Alarms (Aggregated by problem & description)
-        if any(k in q_lower for k in ["frequent", "recurring", "common"]) or ("top" in q_lower and "alarm" in q_lower):
+        # 1. Sensor Types Inquiry
+        if any(k in q_lower for k in ["sensor type", "sensor types", "types of sensor", "types of sensors", "kind of sensor"]):
+            sql = f"""
+            SELECT 
+                nesubtypeid AS `Subtype ID`, 
+                nesubtypename AS `Sensor Type`, 
+                nesubtypemodel AS `Model`, 
+                nesubtypemake AS `Make` 
+            FROM nesubtypedetails 
+            WHERE nesubtypename LIKE '%sensor%' OR nesubtypename LIKE '%fence%' 
+            ORDER BY nesubtypeid 
+            LIMIT {eff_limit};
+            """
+
+        # 2. Sensors Present / Deployed
+        elif any(k in q_lower for k in ["sensors present", "sensor present", "sensors deployed", "sensors installed", "what sensors are there", "what sensors are present", "fence sensor"]):
+            sql = f"""
+            SELECT 
+                n.neid AS `Device ID`, 
+                n.nename AS `Sensor Name`, 
+                s.nesubtypename AS `Sensor Type`, 
+                g.groupname AS `System`,
+                CASE n.neadminstate WHEN 1 THEN 'Managed / Up' WHEN 2 THEN 'Unmanaged / Down' ELSE 'Maintenance' END AS `Status`
+            FROM nedetails n 
+            JOIN neversiondetails v ON n.neversionnumber = v.neversionnumber 
+            JOIN nesubtypedetails s ON v.neversionnesubtypeid = s.nesubtypeid 
+            JOIN groupdetails g ON n.negroupid = g.groupid 
+            WHERE s.nesubtypename LIKE '%sensor%' OR g.groupname LIKE '%sensor%' OR g.groupname = 'FENCE' 
+            ORDER BY n.neid 
+            LIMIT {eff_limit};
+            """
+
+        # 3. Moba / Mobatime / Master Clock / Digital Clock Alarms
+        elif any(k in q_lower for k in ["moba", "mobatime", "masterclock", "master clock", "digital clock", "mcs alarm", "clock alarm", "alarms on moba", "alarms on masterclock"]):
+            sql = f"""
+            SELECT 
+                a.recordid AS `Alarm ID`, 
+                n.nename AS `Device`, 
+                s.nesubtypename AS `Device Type`, 
+                g.groupname AS `System`, 
+                COALESCE(sp.specificproblemname, a.additionaltext, 'Link Alert') AS `Alarm Description`, 
+                p.perceivedseverityname AS `Severity`, 
+                DATE_FORMAT(FROM_UNIXTIME(a.eventtime), '%Y-%m-%d %h:%i:%s %p') AS `Event Time` 
+            FROM activealarms a 
+            JOIN nedetails n ON a.neid = n.neid 
+            LEFT JOIN neversiondetails v ON n.neversionnumber = v.neversionnumber 
+            LEFT JOIN nesubtypedetails s ON v.neversionnesubtypeid = s.nesubtypeid 
+            LEFT JOIN groupdetails g ON n.negroupid = g.groupid 
+            LEFT JOIN specificproblems sp ON a.specificproblem = sp.specificproblemid 
+            LEFT JOIN perceivedseverity p ON a.perceivedseverity = p.perceivedseverityid 
+            WHERE g.groupname = 'MCS' OR s.nesubtypename LIKE '%clock%' OR n.nename LIKE '%clock%' OR n.nename LIKE '%moba%' 
+            ORDER BY a.eventtime DESC 
+            LIMIT {eff_limit};
+            """
+
+        # 4. Top Most Frequent Alarms (Aggregated by problem & description)
+        elif any(k in q_lower for k in ["frequent", "recurring", "common"]) or ("top" in q_lower and "alarm" in q_lower):
             sql = f"""
             SELECT 
                 COALESCE(sp.specificproblemname, at.alarmtypeadditionaltext, a.ticketmessage, 'Hardware/Link Alert') AS alarm_description,
@@ -413,7 +468,7 @@ def query_railway_database(
             LIMIT {eff_limit};
             """
 
-        # 2. Active Critical Alarms (Enriched with equipment name, timestamps & probable cause)
+        # 5. Active Critical Alarms (Enriched with equipment name, timestamps & probable cause)
         elif any(k in q_lower for k in ["critical alarm", "severity 1", "active critical", "critical"]):
             sql = f"""
             SELECT 
@@ -434,7 +489,7 @@ def query_railway_database(
             LIMIT {eff_limit};
             """
 
-        # 3. Severity Distribution
+        # 6. Severity Distribution
         elif any(k in q_lower for k in ["alarm severity", "severity distribution", "count by severity", "severity"]):
             sql = """
             SELECT perceivedseverity,

@@ -44,41 +44,65 @@ from railway_agent_core import RailwayAgent, AgentExecutionResult
 import voice_module as vm
 
 if "authenticated" not in st.session_state:
-  st.session_state.authenticated = False
+    st.session_state.authenticated = False
 
 def login():
-  st.title("Login")
-  with st.form("login_form"):
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    submitted = st.form_submit_button("Log in")
+    st.markdown("## 🚆 Railway Network AI Portal — Login")
+    st.caption("Please enter your authorized control room credentials to access OMCSMGMT_2_0_0.")
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Log in", use_container_width=True)
 
-  if submitted:
-    expected_password = st.secrets.get("credentials", {}).get(username)
-    if expected_password and password == expected_password:
-      st.session_state.authenticated = True
-      st.session_state.username = username
-      st.rerun()
-    else:
-      st.error("Invalid username or password.")
+    if submitted:
+        expected_password = None
+        try:
+            creds = st.secrets.get("credentials", {})
+            expected_password = creds.get(username)
+        except Exception:
+            expected_password = None
+
+        if not expected_password:
+            # Fallback direct TOML resolution if st.secrets raises an error
+            try:
+                import toml
+                candidate_paths = [
+                    os.path.join(os.path.dirname(__file__), ".streamlit", "secrets.toml"),
+                    os.path.join(os.path.dirname(os.path.dirname(__file__)), ".streamlit", "secrets.toml"),
+                    os.path.expanduser("~/.streamlit/secrets.toml")
+                ]
+                for p in candidate_paths:
+                    if os.path.exists(p):
+                        t = toml.load(p)
+                        expected_password = t.get("credentials", {}).get(username)
+                        if expected_password:
+                            break
+            except Exception:
+                pass
+
+        if expected_password and password == expected_password:
+            st.session_state.authenticated = True
+            st.session_state.username = username
+            st.rerun()
+        else:
+            st.error("Invalid username or password.")
 
 
 def logout():
-  st.session_state.authenticated = False
-  st.session_state.pop("username", None)
-  st.rerun()
+    st.session_state.authenticated = False
+    st.session_state.pop("username", None)
+    st.rerun()
 
 
 if not st.session_state.authenticated:
-  login()
-  st.stop()
+    login()
+    st.stop()
 
 # --- Protected App Content ---
-st.sidebar.write(f"Logged in as **{st.session_state.username}**")
-st.sidebar.button("Log out", on_click=logout)
-
-st.title("Dashboard")
-st.write("Welcome to the protected app.")
+with st.sidebar:
+    st.markdown(f"👤 Operator: **{st.session_state.get('username', 'admin')}**")
+    st.button("🚪 Log out", on_click=logout, use_container_width=True)
+    st.divider()
 
 # -----------------------------------------------------------------------------
 # 3. CUSTOM STYLING (BMS MASTER THEME - POLISHED DARK MODE)
@@ -208,16 +232,18 @@ def build_railway_master_chart(question: str, df: pd.DataFrame):
             return fig
 
     # 2. Top Recurring Alarm Frequency Bar Chart
-    if "alarm_description" in plot_df.columns and "active_frequency" in plot_df.columns:
+    desc_col = next((c for c in plot_df.columns if any(k in c.lower() for k in ["description", "problem", "alarm_desc", "alarm name"])), None)
+    freq_col = next((c for c in plot_df.columns if any(k in c.lower() for k in ["frequency", "active count", "active_freq", "alarm count"])), None)
+    if desc_col and freq_col and freq_col != desc_col:
         fig = px.bar(
             plot_df.head(10),
-            x="active_frequency",
-            y="alarm_description",
+            x=freq_col,
+            y=desc_col,
             orientation="h",
             title="<b>🚨 Top Recurring Active Alarms by Frequency</b>",
-            color="active_frequency",
+            color=freq_col,
             color_continuous_scale="Reds",
-            text="active_frequency"
+            text=freq_col
         )
         fig.update_layout(
             template="plotly_dark",
