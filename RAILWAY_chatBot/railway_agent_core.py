@@ -23,6 +23,14 @@ from railway_tools import (
     load_all_memories
 )
 
+OMCS_SYS_PROMPT_FILE = "OMCS_system_prompt.txt"
+with open(OMCS_SYS_PROMPT_FILE, "r", encoding="utf-8") as f:
+    OMCS_SYS_PROMPT = f'''
+
+    {f.read()}
+
+    '''
+
 SYSTEM_AGENT_PROMPT = """You are the autonomous Master AI Agent for the Railway Central Network Management & Control System (OMCSMGMT_2_0_0).
 You supervise railway network elements (routers, switches, CCTV feeds, servers), active alarms, SNMP polling telemetry, and FRACAS tickets.
 
@@ -37,6 +45,17 @@ CRITICAL OPERATIONAL RULES:
 - NEVER output raw JSON tool code or internal schema dictionaries in text to the user.
 - Provide crisp, authoritative railway control room insights: highlight critical alarm counts, root cause findings, and actionable recommendations.
 """
+
+SYSTEM_AGENT_PROMPT = f'''
+
+  {OMCS_SYS_PROMPT}
+
+ NEVER output raw JSON tool code or internal schema dictionaries in text to the user.
+
+  Combine MODE A and MODE B and give me final descriptive answer to the user query
+
+'''
+print(SYSTEM_AGENT_PROMPT)
 
 class AgentExecutionResult:
     def __init__(

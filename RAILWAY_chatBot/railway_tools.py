@@ -24,11 +24,11 @@ import pymysql
 # -----------------------------------------------------------------------------
 
 DEFAULT_DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "10.20.31.15"),
-    "port": int(os.getenv("DB_PORT", 3306)),
-    "user": os.getenv("DB_USER", "omcsrouser"),
-    "password": os.getenv("DB_PASSWORD", "RoOmcs@123"),
-    "database": os.getenv("DB_NAME", "OMCSMGMT_2_0_0")
+    "host": os.getenv("DB_HOST", "127.0.0.1"),
+    "port": int(os.getenv("DB_PORT", 3307)),
+    "user": os.getenv("DB_USER", "user"),
+    "password": os.getenv("DB_PASSWORD", "psss"),
+    "database": os.getenv("DB_NAME", "db_2_0_0")
 }
 
 TRAIN_DB_FILE = os.path.join(os.path.dirname(__file__), "railway_train_db.sqlite")

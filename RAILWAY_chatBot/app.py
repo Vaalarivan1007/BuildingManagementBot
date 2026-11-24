@@ -24,6 +24,9 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import railway_tools
 from railway_tools import (
     OMCSDatabaseConnector,
@@ -38,6 +41,7 @@ from railway_tools import (
     format_dataframe_human_friendly
 )
 from railway_agent_core import RailwayAgent, AgentExecutionResult
+import voice_module as vm
 
 # -----------------------------------------------------------------------------
 # 3. CUSTOM STYLING (BMS MASTER THEME - POLISHED DARK MODE)
@@ -98,6 +102,14 @@ if "sql_execution_logs" not in st.session_state:
 
 if "pending_query" not in st.session_state:
     st.session_state["pending_query"] = None
+
+OMCS_SYS_PROMPT_FILE = "OMCS_system_prompt.txt"
+with open(OMCS_SYS_PROMPT_FILE, "r", encoding="utf-8") as f:
+    OMCS_SYS_PROMPT = f'''
+
+    {f.read()}
+
+    '''
 
 @st.cache_resource(show_spinner="Initializing Railway AI Agent...")
 def get_railway_agent():
@@ -526,3 +538,6 @@ if st.session_state["pending_query"]:
 user_query = st.chat_input("Ask a question about railway alarms, network elements, stations, or telemetry...")
 if user_query:
     run_pipeline(user_query)
+
+# Voice search + live translation lives in voice_module.py (must render after st.chat_input)
+vm.render_voice_input()
