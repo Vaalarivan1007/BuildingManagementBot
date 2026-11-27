@@ -22,7 +22,7 @@ python -m streamlit run app.py
 ## 🔌 Database Details & Connectivity
 - **Target DB**: `OMCSMGMT_2_0_0` (173 relational tables)
 - **Live Endpoint**: `10.20.31.15:3306`
-- **Read-Only Credentials**: `omcsrouser` / `RoOmcs@123`
+- **Read-Only Credentials**: Configured via `.env` (refer to `.env.example`).
 - **Safety**: Built-in SQL sanitizer blocks any mutating statements (`DROP`, `DELETE`, `UPDATE`, `INSERT`).
 
 ---

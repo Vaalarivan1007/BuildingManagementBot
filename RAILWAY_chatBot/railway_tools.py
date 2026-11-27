@@ -2,7 +2,7 @@
 """
 railway_tools.py - Streamlined 4-Tool Catalog for Railway Network Management (OMCSMGMT_2_0_0)
 Optimized for Qwen 2.5 Coder & Ollama Native Tool Calling (Zero Ambiguity & High Speed).
-Connects to live OMCS database at 10.20.31.15:3306.
+Connects to live OMCS database configured via environment variables (.env).
 Enriched with relational joins across nedetails, probablecauses, specificproblems, and alarmtypedetails.
 """
 
@@ -18,17 +18,25 @@ from typing import Any, Dict, List, Optional, Tuple
 from decimal import Decimal
 import pandas as pd
 import pymysql
+from dotenv import load_dotenv
 
 # -----------------------------------------------------------------------------
 # 1. DATABASE CONFIGURATION & CONNECTOR
 # -----------------------------------------------------------------------------
 
+# Load environment variables from .env
+_env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(_env_path):
+    load_dotenv(_env_path)
+else:
+    load_dotenv()
+
 DEFAULT_DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "10.20.31.15"),
-    "port": int(os.getenv("DB_PORT", 3306)),
-    "user": os.getenv("DB_USER", "omcsrouser"),
-    "password": os.getenv("DB_PASSWORD", "RoOmcs@123"),
-    "database": os.getenv("DB_NAME", "OMCSMGMT_2_0_0")
+    "host": os.getenv("DB_HOST", "127.0.0.1"),
+    "port": int(os.getenv("DB_PORT", "3306") or 3306),
+    "user": os.getenv("DB_USER", ""),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "database": os.getenv("DB_NAME", "")
 }
 
 TRAIN_DB_FILE = os.path.join(os.path.dirname(__file__), "railway_train_db.sqlite")

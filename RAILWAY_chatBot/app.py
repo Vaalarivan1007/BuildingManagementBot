@@ -501,11 +501,15 @@ def run_pipeline(question: str):
 st.markdown("# 🚆 Railway Network AI Master Agent")
 st.caption("Autonomous FCAPS Control Room Operations & Central Management Intelligence (OMCSMGMT_2_0_0)")
 
+db_name_display = DEFAULT_DB_CONFIG.get("database") or "OMCSMGMT_2_0_0"
+host_display = DEFAULT_DB_CONFIG.get("host") or "127.0.0.1"
+port_display = DEFAULT_DB_CONFIG.get("port") or 3306
+
 st.markdown(
-    '<div class="connected-badge">'
-    '🟢 Live Database Connected: <b>OMCSMGMT_2_0_0</b> on <b>10.20.31.15:3306</b> '
-    '| <b>173 Tables</b> | Model: <b>Qwen 2.5 Coder (7B)</b>'
-    '</div>',
+    f'<div class="connected-badge">'
+    f'🟢 Live Database Connected: <b>{db_name_display}</b> on <b>{host_display}:{port_display}</b> '
+    f'| <b>173 Tables</b> | Model: <b>Qwen 2.5 Coder (7B)</b>'
+    f'</div>',
     unsafe_allow_html=True
 )
 
